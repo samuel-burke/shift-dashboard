@@ -34,6 +34,7 @@ import {
   MegaphoneIcon,
 } from "../../components/ShiftIcons";
 import RequestsDrawer from "../../components/RequestsDrawer";
+import UkgImportButton from "../../components/UkgImportButton";
 import SwapRequestSheet, { type CoworkerShift } from "../../components/SwapRequestSheet";
 import IncomingSwapRequests from "../../components/IncomingSwapRequests";
 
@@ -1137,6 +1138,10 @@ export default function SchedulePageClient() {
           )}
         </button>
       )}
+
+      {/* Import shifts from a UKG (Kronos) schedule export. The realtime
+          subscription on `schedules` refreshes the calendar after import. */}
+      {isManager && <UkgImportButton />}
     </>
   );
 
