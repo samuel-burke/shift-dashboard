@@ -199,6 +199,20 @@ describe("PATCH /api/employees", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns 200 when setting a job code", async () => {
+    mockCreateClient.mockResolvedValue(makeSupabaseClient({ user: MOCK_USER, isManager: true }) as any);
+    const res = await PATCH(patchReq({ id: 1, jobCode: "full_time" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it("returns 400 for an invalid job code", async () => {
+    mockCreateClient.mockResolvedValue(makeSupabaseClient({ user: MOCK_USER, isManager: true }) as any);
+    const res = await PATCH(patchReq({ id: 1, jobCode: "contractor" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("jobCode") });
+  });
+
   // ── DB error ────────────────────────────────────────────────────────────────
 
   it("returns 500 on database error", async () => {
