@@ -9,6 +9,7 @@
 // they stay fixed and the generator schedules around them.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { writeAuditLog } from "./audit";
 import { generateAutoSchedule, type FixedShift } from "./auto-schedule";
 import { AUTO_SCHEDULE_POLICY_KEYS, parseAutoSchedulePolicy } from "./auto-schedule-policy";
 import { curveForDate, type CoverageBlock, type CoverageProfile } from "./coverage";
@@ -224,6 +225,19 @@ export async function resyncAutoDrafts(
       changedWeeks.push(weekStart);
       unfilledCount += result.unfilled.length;
     }
+  }
+
+  // Background regenerations mutate the draft schedule with no request-scoped
+  // actor — record them so the audit trail explains why drafts moved.
+  if (changedWeeks.length > 0) {
+    writeAuditLog({
+      action:       "draft_schedule.auto_sync",
+      orgId,
+      resourceType: "draft_schedule",
+      resourceId:   changedWeeks[0],
+      after:        { weeks: changedWeeks, unfilledRanges: unfilledCount },
+      metadata:     { reason: notifyReason ?? null, weeks: changedWeeks },
+    }).catch(() => {});
   }
 
   if (notifyReason && changedWeeks.length > 0) {

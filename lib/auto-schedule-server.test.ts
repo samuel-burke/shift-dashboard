@@ -4,6 +4,7 @@ import { notifyManagers } from "./notify";
 import { makeSupabaseClient, MOCK_ORG_ID } from "../app/api/__tests__/helpers";
 
 vi.mock("./notify", () => ({ notifyManagers: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("./audit", () => ({ writeAuditLog: vi.fn().mockResolvedValue(undefined) }));
 
 beforeEach(() => {
   vi.mocked(notifyManagers).mockClear();
