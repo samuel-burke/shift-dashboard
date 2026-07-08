@@ -5,15 +5,13 @@ import { getOrgContext } from "@/lib/org-context";
 import { withOrg } from "@/lib/org-scope";
 import { writeAuditLog } from "@/lib/audit";
 import { validateBlocks, CoverageBlock } from "@/lib/coverage";
-import { resyncAutoDrafts } from "@/lib/auto-schedule-server";
-
-type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
+import { resyncAutoDraftsAsService } from "@/lib/auto-schedule-server";
 
 // Editing or deleting a profile changes the target curves — regenerate every
 // affected auto-managed draft week. Never fails the write.
-async function resync(supabase: SupabaseClient, orgId: string) {
+async function resync(orgId: string) {
   try {
-    await resyncAutoDrafts(supabase, orgId);
+    await resyncAutoDraftsAsService(orgId);
   } catch (e) {
     console.error("[api/coverage-profiles] auto-schedule resync failed", e);
   }
@@ -180,7 +178,7 @@ export async function PUT(request: Request) {
     }
   }
 
-  if (blocks !== undefined) await resync(supabase, orgId!);
+  if (blocks !== undefined) await resync(orgId!);
 
   writeAuditLog({
     action:       "coverage_profile.update",
@@ -224,7 +222,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
-  await resync(supabase, orgId!);
+  await resync(orgId!);
 
   writeAuditLog({
     action:       "coverage_profile.delete",

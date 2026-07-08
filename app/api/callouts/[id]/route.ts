@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase-server";
 import { getOrgContext } from "@/lib/org-context";
 import { writeAuditLog } from "@/lib/audit";
-import { resyncAutoDrafts } from "@/lib/auto-schedule-server";
+import { resyncAutoDraftsAsService } from "@/lib/auto-schedule-server";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +56,7 @@ export async function DELETE(
   // auto-managed draft week containing it. Never fails the rescind.
   const calloutDate = typeof callout.date === "string" ? callout.date.slice(0, 10) : String(callout.date);
   try {
-    await resyncAutoDrafts(supabase, orgId, {
+    await resyncAutoDraftsAsService(orgId, {
       dates: [calloutDate],
       notifyReason: "A rescinded call-out",
     });

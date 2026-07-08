@@ -5,7 +5,7 @@ import { requireManager } from "@/lib/require-manager";
 import { getOrgContext } from "@/lib/org-context";
 import { isDemoOrgId } from "@/lib/demo-org";
 import { writeAuditLog } from "@/lib/audit";
-import { resyncAutoDrafts } from "@/lib/auto-schedule-server";
+import { resyncAutoDraftsAsService } from "@/lib/auto-schedule-server";
 
 export const dynamic = "force-dynamic";
 
@@ -123,7 +123,13 @@ export async function PATCH(request: Request) {
   if (Object.keys(updates).length === 0)
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
 
-  const { error } = await supabase
+  // The employees table is manager-writable under RLS, so the self-service
+  // desired-hours path must write with the service role — the caller's client
+  // would silently update zero rows. The gate above has already pinned the
+  // update to the caller's own row and to that single field, and both filters
+  // stay explicit (see lib/org-scope.ts on admin-client scoping).
+  const writer = isManager ? supabase : createAdminClient();
+  const { error } = await writer
     .from("employees")
     .update(updates)
     .eq("org_id", orgId!)
@@ -138,7 +144,7 @@ export async function PATCH(request: Request) {
   // auto-managed draft weeks. Never fails the update.
   if (desiredHours !== undefined) {
     try {
-      await resyncAutoDrafts(supabase, orgId!, { notifyReason: "A desired-hours change" });
+      await resyncAutoDraftsAsService(orgId!, { notifyReason: "A desired-hours change" });
     } catch (e) {
       console.error("[api/employees] auto-schedule resync failed", e);
     }

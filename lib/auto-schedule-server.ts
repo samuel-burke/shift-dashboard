@@ -16,6 +16,7 @@ import { curveForDate, type CoverageBlock, type CoverageProfile } from "./covera
 import { dayOfWeek, weekDates } from "./draft-metrics";
 import { notifyManagers } from "./notify";
 import { withOrgAll } from "./org-scope";
+import { createAdminClient } from "./supabase-admin";
 
 // Route handlers pass the client created by lib/supabase-server; keeping the
 // parameter loosely typed (only `.from`/`.rpc` are used) lets tests inject mocks.
@@ -241,7 +242,7 @@ export async function resyncAutoDrafts(
   }
 
   if (notifyReason && changedWeeks.length > 0) {
-    const scope = changedWeeks.length === 1
+    const notifyScope = changedWeeks.length === 1
       ? `the week of ${changedWeeks[0]}`
       : `${changedWeeks.length} weeks`;
     const gaps = unfilledCount > 0
@@ -253,11 +254,27 @@ export async function resyncAutoDrafts(
         orgId,
         "shift_change",
         "Draft Schedule Updated",
-        `${notifyReason} changed the auto-generated draft schedule for ${scope}.${gaps}`,
+        `${notifyReason} changed the auto-generated draft schedule for ${notifyScope}.${gaps}`,
         { weeks: changedWeeks }
       );
     } catch (e) {
       console.error("[auto-schedule] resync notification failed", e);
     }
   }
+}
+
+/**
+ * resyncAutoDrafts with the service-role client. Change hooks must use this:
+ * they fire from requests whose RLS-scoped client often cannot touch
+ * draft_schedules at all — the table is managers-only, while call-outs,
+ * availability edits, and desired-hours changes come from employees — so a
+ * caller-client resync would silently no-op. Every query in this module is
+ * explicitly org-scoped (see lib/org-scope.ts), which is the requirement for
+ * using the admin client safely.
+ */
+export function resyncAutoDraftsAsService(
+  orgId: string,
+  options: { dates?: string[]; notifyReason?: string } = {}
+): Promise<void> {
+  return resyncAutoDrafts(createAdminClient(), orgId, options);
 }

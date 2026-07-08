@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase-server";
 import { requireManager } from "@/lib/require-manager";
 import { notify } from "@/lib/notify";
 import { writeAuditLog } from "@/lib/audit";
-import { resyncAutoDrafts } from "@/lib/auto-schedule-server";
+import { resyncAutoDraftsAsService } from "@/lib/auto-schedule-server";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +55,7 @@ export async function PUT(
   if (pto?.date) {
     const ptoDate = typeof pto.date === "string" ? pto.date.slice(0, 10) : String(pto.date);
     try {
-      await resyncAutoDrafts(supabase, orgId!, {
+      await resyncAutoDraftsAsService(orgId!, {
         dates: [ptoDate],
         notifyReason: status === "approved" ? "A time-off approval" : "A time-off decision",
       });

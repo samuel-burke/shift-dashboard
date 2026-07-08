@@ -6,7 +6,7 @@ import { withOrgAll } from "@/lib/org-scope";
 import { writeAuditLog } from "@/lib/audit";
 import { parsePunchPolicy, punchPolicyRows } from "@/lib/punch-policy";
 import { parseAutoSchedulePolicy, autoSchedulePolicyRows } from "@/lib/auto-schedule-policy";
-import { resyncAutoDrafts } from "@/lib/auto-schedule-server";
+import { resyncAutoDraftsAsService } from "@/lib/auto-schedule-server";
 
 export const dynamic = "force-dynamic";
 
@@ -170,7 +170,7 @@ export async function PUT(request: Request) {
   // generation for the auto-managed draft weeks. Never fails the settings save.
   if (body.autoSchedule !== undefined) {
     try {
-      await resyncAutoDrafts(supabase, orgId!);
+      await resyncAutoDraftsAsService(orgId!);
     } catch (e) {
       console.error("[api/settings] auto-schedule resync failed", e);
     }

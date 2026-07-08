@@ -215,13 +215,18 @@ describe("PATCH /api/employees", () => {
     expect(await res.json()).toMatchObject({ error: expect.stringContaining("desiredHours") });
   });
 
-  it("lets a non-manager set their own desired hours", async () => {
+  it("lets a non-manager set their own desired hours (via the service client)", async () => {
     mockCreateClient.mockResolvedValue(
       makeSupabaseClient({ user: MOCK_USER, isManager: false, linkedEmployee: { id: 7 } }) as any
     );
+    // employees is manager-writable under RLS, so the self-service write must
+    // go through the admin client.
+    const admin = makeSupabaseClient({ user: MOCK_USER, isManager: true });
+    mockCreateAdminClient.mockReturnValue(admin as any);
     const res = await PATCH(patchReq({ id: 7, desiredHours: 24 }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
+    expect(admin.from).toHaveBeenCalledWith("employees");
   });
 
   it("blocks a non-manager from setting someone else's desired hours", async () => {
