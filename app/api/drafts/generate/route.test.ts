@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { POST } from "./route";
+import { POST, DELETE } from "./route";
 import { createClient } from "@/lib/supabase-server";
 import { makeSupabaseClient, MOCK_USER } from "../../__tests__/helpers";
 
@@ -105,5 +105,53 @@ describe("POST /api/drafts/generate — generation", () => {
     mockCreateClient.mockResolvedValue(makeClient({ draftsError: { message: "db error" } }) as any);
     const res = await POST(postReq({ weekStart: WEEK_START }));
     expect(res.status).toBe(500);
+  });
+});
+
+function deleteReq(body: unknown) {
+  return new Request("http://localhost/api/drafts/generate", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("DELETE /api/drafts/generate", () => {
+  it("returns 400 when weekStart is missing", async () => {
+    mockCreateClient.mockResolvedValue(makeClient() as any);
+    const res = await DELETE(deleteReq({}));
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 401 when not authenticated", async () => {
+    mockCreateClient.mockResolvedValue(makeClient({ user: null, isManager: false }) as any);
+    const res = await DELETE(deleteReq({ weekStart: WEEK_START }));
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 403 when not a manager", async () => {
+    mockCreateClient.mockResolvedValue(makeClient({ isManager: false }) as any);
+    const res = await DELETE(deleteReq({ weekStart: WEEK_START }));
+    expect(res.status).toBe(403);
+  });
+
+  it("removes the week's auto drafts and reports the count", async () => {
+    const client = makeClient({
+      drafts: [
+        { id: 42 },
+        { id: 43 },
+      ],
+    });
+    mockCreateClient.mockResolvedValue(client as any);
+    const res = await DELETE(deleteReq({ weekStart: WEEK_START }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ removed: 2 });
+    // The delete is scoped to auto drafts only.
+    const draftsBuilder = client.from.mock.results
+      .filter((_: unknown, i: number) => client.from.mock.calls[i][0] === "draft_schedules")
+      .map((r: { value: unknown }) => r.value)
+      .find((b: any) => b.delete.mock.calls.length > 0) as any;
+    expect(draftsBuilder).toBeDefined();
+    expect(draftsBuilder.eq).toHaveBeenCalledWith("source", "auto");
   });
 });

@@ -331,6 +331,26 @@ export default function DraftPageClient() {
     }
   }
 
+  /** Remove the week's auto drafts — the week stops being auto-managed. */
+  async function handleClearAutoFill() {
+    setGenerating(true);
+    setError(null);
+    setGenerateResult(null);
+    try {
+      const res = await apiFetch("/api/drafts/generate", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekStart }),
+      });
+      if (!res.ok) await throwApiError(res, "Failed to clear auto-filled shifts");
+      setDrafts(await fetchDrafts(weekStart));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to clear auto-filled shifts");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   async function handlePublish() {
     setPublishing(true);
     setError(null);
@@ -539,17 +559,28 @@ export default function DraftPageClient() {
             </div>
 
             {/* Auto-fill from coverage curves */}
-            <motion.button
-              onClick={handleAutoFill}
-              disabled={isLoading || generating || migrationRequired}
-              aria-busy={generating}
-              whileTap={{ scale: 0.98 }}
-              transition={{ type: "spring", stiffness: 400, damping: 25 }}
-              className="w-full mb-3 px-4 py-3 rounded-xl bg-violet-600/15 border border-violet-500/30 text-violet-300 font-bold text-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-violet-600/25 transition-colors flex items-center justify-center gap-2"
-            >
-              <span aria-hidden="true">✨</span>
-              {generating ? "Generating…" : "Auto-fill week from coverage"}
-            </motion.button>
+            <div className="mb-3">
+              <motion.button
+                onClick={handleAutoFill}
+                disabled={isLoading || generating || migrationRequired}
+                aria-busy={generating}
+                whileTap={{ scale: 0.98 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                className="w-full px-4 py-3 rounded-xl bg-violet-600/15 border border-violet-500/30 text-violet-300 font-bold text-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-violet-600/25 transition-colors flex items-center justify-center gap-2"
+              >
+                <span aria-hidden="true">✨</span>
+                {generating ? "Working…" : "Auto-fill week from coverage"}
+              </motion.button>
+              {!isLoading && drafts.some((d) => d.source === "auto") && (
+                <button
+                  onClick={handleClearAutoFill}
+                  disabled={generating}
+                  className="w-full mt-1.5 py-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-300 bg-transparent border-none cursor-pointer disabled:opacity-40 transition-colors"
+                >
+                  Clear auto-filled shifts — stop updating this week automatically
+                </button>
+              )}
+            </div>
 
             {/* Day chips */}
             <div className="grid grid-cols-7 gap-1 mb-3">
