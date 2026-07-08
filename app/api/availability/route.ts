@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase-server";
 import { getOrgContext } from "@/lib/org-context";
 import { withOrg } from "@/lib/org-scope";
@@ -9,15 +9,18 @@ export const dynamic = "force-dynamic";
 
 // Availability windows feed the auto-scheduler; a change re-runs generation
 // for every auto-managed draft week (day-of-week rules affect all of them).
-// Silent (no manager notification): availability is saved one debounced day
-// at a time, so a notification per save would spam the feed. Never fails the
-// availability write.
-async function resync(orgId: string) {
-  try {
-    await resyncAutoDraftsAsService(orgId);
-  } catch (e) {
-    console.error("[api/availability] auto-schedule resync failed", e);
-  }
+// Runs via after() so the save responds immediately — availability is edited
+// one debounced day at a time and each resync can touch many weeks. Silent
+// (no manager notification) for the same reason: one notification per
+// day-save would spam the feed. Never fails the availability write.
+function resync(orgId: string) {
+  after(async () => {
+    try {
+      await resyncAutoDraftsAsService(orgId);
+    } catch (e) {
+      console.error("[api/availability] auto-schedule resync failed", e);
+    }
+  });
 }
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -137,7 +140,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
-  await resync(orgId);
+  resync(orgId);
 
   writeAuditLog({
     action:       "availability.upsert",
@@ -219,7 +222,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
-  await resync(orgId);
+  resync(orgId);
 
   writeAuditLog({
     action:       "availability.delete",
