@@ -4,6 +4,19 @@ import { requireManager } from "@/lib/require-manager";
 import { getOrgContext } from "@/lib/org-context";
 import { withOrg } from "@/lib/org-scope";
 import { writeAuditLog } from "@/lib/audit";
+import { resyncAutoDrafts } from "@/lib/auto-schedule-server";
+
+type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
+
+// Coverage assignments feed the auto-scheduler — regenerate any affected
+// auto-managed draft weeks so drafts track the curve. Never fails the write.
+async function resync(supabase: SupabaseClient, orgId: string, dates?: string[]) {
+  try {
+    await resyncAutoDrafts(supabase, orgId, { dates });
+  } catch (e) {
+    console.error("[api/coverage-assignments] auto-schedule resync failed", e);
+  }
+}
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +96,8 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
+  await resync(supabase, orgId!);
+
   writeAuditLog({
     action:       "coverage_default.update",
     orgId:        orgId!,
@@ -120,6 +135,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
+  await resync(supabase, orgId!, [date]);
+
   writeAuditLog({
     action:       "coverage_override.set",
     orgId:        orgId!,
@@ -153,6 +170,8 @@ export async function DELETE(request: Request) {
     console.error("[api/coverage-assignments]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
+
+  await resync(supabase, orgId!, [date]);
 
   writeAuditLog({
     action:       "coverage_override.clear",

@@ -3,8 +3,22 @@ import { createClient } from "@/lib/supabase-server";
 import { getOrgContext } from "@/lib/org-context";
 import { withOrg } from "@/lib/org-scope";
 import { writeAuditLog } from "@/lib/audit";
+import { resyncAutoDrafts } from "@/lib/auto-schedule-server";
 
 export const dynamic = "force-dynamic";
+
+type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
+
+// Availability windows feed the auto-scheduler; a change re-runs generation
+// for every auto-managed draft week (day-of-week rules affect all of them).
+// Never fails the availability write.
+async function resync(supabase: SupabaseClient, orgId: string) {
+  try {
+    await resyncAutoDrafts(supabase, orgId);
+  } catch (e) {
+    console.error("[api/availability] auto-schedule resync failed", e);
+  }
+}
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -123,6 +137,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 
+  await resync(supabase, orgId);
+
   writeAuditLog({
     action:       "availability.upsert",
     orgId,
@@ -202,6 +218,8 @@ export async function DELETE(request: Request) {
     console.error("[api/availability]", deleteError);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
+
+  await resync(supabase, orgId);
 
   writeAuditLog({
     action:       "availability.delete",

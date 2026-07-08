@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase-server";
 import { getOrgContext } from "@/lib/org-context";
 import { writeAuditLog } from "@/lib/audit";
+import { resyncAutoDrafts } from "@/lib/auto-schedule-server";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,15 @@ export async function DELETE(
   if (deleteError) {
     console.error("[api/callouts/[id]]", deleteError);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+
+  // The employee is back in the pool for that day — re-run generation for any
+  // auto-managed draft week containing it. Never fails the rescind.
+  const calloutDate = typeof callout.date === "string" ? callout.date.slice(0, 10) : String(callout.date);
+  try {
+    await resyncAutoDrafts(supabase, orgId, { dates: [calloutDate] });
+  } catch (e) {
+    console.error("[api/callouts/[id]] auto-schedule resync failed", e);
   }
 
   writeAuditLog({

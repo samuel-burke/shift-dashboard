@@ -17,13 +17,13 @@ vi.mock("next/server", () => ({
 const mockCreateClient = vi.mocked(createClient);
 
 const MOCK_DRAFT_DB = [
-  { id: 1, employee_id: 10, date: "2026-06-01", start_minutes: 480, end_minutes: 960 },
-  { id: 2, employee_id: 11, date: "2026-06-02", start_minutes: 540, end_minutes: 1020 },
+  { id: 1, employee_id: 10, date: "2026-06-01", start_minutes: 480, end_minutes: 960, source: "manual" },
+  { id: 2, employee_id: 11, date: "2026-06-02", start_minutes: 540, end_minutes: 1020, source: "auto" },
 ];
 
 const MOCK_DRAFT_MAPPED = [
-  { id: 1, employeeId: 10, date: "2026-06-01", startMinutes: 480, endMinutes: 960 },
-  { id: 2, employeeId: 11, date: "2026-06-02", startMinutes: 540, endMinutes: 1020 },
+  { id: 1, employeeId: 10, date: "2026-06-01", startMinutes: 480, endMinutes: 960, source: "manual" },
+  { id: 2, employeeId: 11, date: "2026-06-02", startMinutes: 540, endMinutes: 1020, source: "auto" },
 ];
 
 // ── GET ───────────────────────────────────────────────────────────────────────

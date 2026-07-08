@@ -130,6 +130,8 @@ export default function DraftPageClient() {
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{ published: number; skipped: number } | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateResult, setGenerateResult] = useState<{ created: number; unfilled: number } | null>(null);
 
   const weekStart = useMemo(
     () => computeWeekStart(new Date(), firstDayOfWeek, weekOffset),
@@ -183,6 +185,7 @@ export default function DraftPageClient() {
     setLoading(true);
     setError(null);
     setPublishResult(null);
+    setGenerateResult(null);
     fetchDrafts(weekStart)
       .then((data) => { if (!cancelled) setDrafts(data); })
       .catch((e) => {
@@ -273,6 +276,32 @@ export default function DraftPageClient() {
       else next[date] = profileId;
       return next;
     });
+    // The server re-runs generation for auto-managed weeks when the curve
+    // changes — pull the refreshed drafts so the editor tracks it live.
+    fetchDrafts(weekStart).then(setDrafts).catch(() => {});
+  }
+
+  /** Auto-fill the week from the coverage curves. Keeps manual drafts. */
+  async function handleAutoFill() {
+    setGenerating(true);
+    setError(null);
+    setPublishResult(null);
+    setGenerateResult(null);
+    try {
+      const res = await apiFetch("/api/drafts/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekStart }),
+      });
+      if (!res.ok) await throwApiError(res, "Failed to auto-fill schedule");
+      const result = await res.json();
+      setGenerateResult({ created: result.created ?? 0, unfilled: result.unfilled?.length ?? 0 });
+      setDrafts(await fetchDrafts(weekStart));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to auto-fill schedule");
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function handlePublish() {
@@ -395,6 +424,24 @@ export default function DraftPageClient() {
           </div>
         )}
         <AnimatePresence>
+          {generateResult && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              role="status"
+              className={`mx-4 mt-3 px-4 py-3 rounded-xl text-sm text-center [@media(min-width:900px)]:mx-6 ${
+                generateResult.unfilled > 0
+                  ? "bg-amber-500/10 border border-amber-500/25 text-amber-400"
+                  : "bg-violet-500/10 border border-violet-500/25 text-violet-300"
+              }`}
+            >
+              Auto-filled {generateResult.created} shift{generateResult.created === 1 ? "" : "s"}
+              {generateResult.unfilled > 0 && ` · ${generateResult.unfilled} range${generateResult.unfilled === 1 ? "" : "s"} still uncovered`}
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
           {publishResult && (
             <motion.div
               initial={{ opacity: 0, y: -6 }}
@@ -463,6 +510,19 @@ export default function DraftPageClient() {
             <div className="text-[11px] text-slate-400 font-semibold tracking-wider uppercase mb-2 px-1">
               Schedule At a Glance
             </div>
+
+            {/* Auto-fill from coverage curves */}
+            <motion.button
+              onClick={handleAutoFill}
+              disabled={isLoading || generating || migrationRequired}
+              aria-busy={generating}
+              whileTap={{ scale: 0.98 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              className="w-full mb-3 px-4 py-3 rounded-xl bg-violet-600/15 border border-violet-500/30 text-violet-300 font-bold text-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-violet-600/25 transition-colors flex items-center justify-center gap-2"
+            >
+              <span aria-hidden="true">✨</span>
+              {generating ? "Generating…" : "Auto-fill week from coverage"}
+            </motion.button>
 
             {/* Day chips */}
             <div className="grid grid-cols-7 gap-1 mb-3">
@@ -572,8 +632,14 @@ export default function DraftPageClient() {
                             {fmtMinutes(d.startMinutes)} – {fmtMinutes(d.endMinutes)} · {Math.round(shiftHours(d) * 10) / 10} hrs
                           </div>
                         </div>
-                        <span className="text-[10px] font-bold uppercase text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-full px-2 py-0.5 shrink-0">
-                          Draft
+                        <span
+                          className={`text-[10px] font-bold uppercase rounded-full px-2 py-0.5 shrink-0 ${
+                            d.source === "auto"
+                              ? "text-violet-300 bg-violet-500/10 border border-violet-500/25"
+                              : "text-amber-400/90 bg-amber-500/10 border border-amber-500/20"
+                          }`}
+                        >
+                          {d.source === "auto" ? "Auto" : "Draft"}
                         </span>
                       </button>
                     );

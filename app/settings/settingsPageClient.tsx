@@ -10,6 +10,7 @@ import InviteSheet from "../../components/InviteSheet";
 import StoreHoursSection from "../../components/StoreHoursSection";
 import { getMonogram, fmtMinutes, AvailabilityRecord } from "../../data/types";
 import AvailabilitySection from "../../components/AvailabilitySection";
+import DesiredHoursSection from "../../components/DesiredHoursSection";
 import GeofenceMap from "../../components/GeofenceMap";
 import { SkeletonSettingsBody } from "../../components/Skeleton";
 import { useTheme, type ThemeMode } from "../../components/ThemeProvider";
@@ -808,6 +809,9 @@ export default function SettingsPageClient({
             firstDayOfWeek={firstDayOfWeek}
           />
         )}
+
+        {/* Desired weekly hours — feeds the auto-scheduler */}
+        {employeeId !== null && <DesiredHoursSection employeeId={employeeId} />}
 
         {/* Appearance — all users */}
         <section>

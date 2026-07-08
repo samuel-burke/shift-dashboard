@@ -27,6 +27,9 @@ export type Schedule = {
   date: string;
   startMinutes: number;
   endMinutes: number;
+  // Draft shifts only: 'auto' = created by the auto-scheduler and regenerated
+  // when its inputs change; 'manual' (or absent) = placed by a manager.
+  source?: "manual" | "auto";
 };
 
 // Derived — computed from clock-in/out times and store hours

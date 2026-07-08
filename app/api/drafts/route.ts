@@ -97,6 +97,7 @@ export async function GET(request: Request) {
     date:         typeof s.date === "string" ? s.date.slice(0, 10) : s.date,
     startMinutes: s.start_minutes,
     endMinutes:   s.end_minutes,
+    source:       s.source ?? "manual",
   }));
 
   return NextResponse.json(mapped);
@@ -174,9 +175,11 @@ export async function PUT(request: Request) {
     if (conflict) return conflict;
   }
 
+  // A manager touching a generated shift claims it: it becomes manual and the
+  // auto-scheduler stops regenerating it.
   const { error } = await supabase
     .from("draft_schedules")
-    .update({ start_minutes: startMinutes, end_minutes: endMinutes })
+    .update({ start_minutes: startMinutes, end_minutes: endMinutes, source: "manual" })
     .eq("org_id", orgId)
     .eq("id", id);
 
