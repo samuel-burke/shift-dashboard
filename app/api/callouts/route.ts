@@ -179,7 +179,7 @@ export async function POST(request: Request) {
   // The employee is out that day — re-run generation for any auto-managed
   // draft week containing it. Never fails the call-out.
   try {
-    await resyncAutoDrafts(supabase, orgId, { dates: [date] });
+    await resyncAutoDrafts(supabase, orgId, { dates: [date], notifyReason: "A call-out" });
   } catch (e) {
     console.error("[api/callouts] auto-schedule resync failed", e);
   }

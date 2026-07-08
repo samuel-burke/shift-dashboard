@@ -11,6 +11,9 @@ export type WeeklyHoursRow = {
   totalHours: number;
   overtimeMinutes: number;
   isOvertime: boolean;
+  // The employee's desired weekly hours (in minutes), when set. Shown as a
+  // target next to the total so a planner can spot who is under or over.
+  desiredMinutes?: number | null;
 };
 
 function fmtHours(minutes: number): string {
@@ -70,6 +73,9 @@ export default function WeeklyHoursSummary({
                 }`}
               >
                 {fmtHours(e.totalMinutes)}
+                {e.desiredMinutes != null && (
+                  <span className="text-slate-500 font-normal"> / {fmtHours(e.desiredMinutes)}</span>
+                )}
               </span>
             </span>
           </div>

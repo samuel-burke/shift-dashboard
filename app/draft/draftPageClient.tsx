@@ -25,6 +25,8 @@ import {
 import AppShell from "../../components/AppShell";
 import BottomNav from "../../components/BottomNav";
 import DraftShiftSheet from "../../components/DraftShiftSheet";
+import WeeklyHoursSummary, { WeeklyHoursRow } from "../../components/WeeklyHoursSummary";
+import { summarizeWeeklyHours } from "../../lib/schedule-hours";
 import { createApiFetch } from "@/lib/api-fetch";
 
 // recharts is heavy; code-split both planner charts out of the route's
@@ -236,6 +238,31 @@ export default function DraftPageClient() {
     [employees, selectedDayDrafts]
   );
   const empById = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
+
+  // Per-employee week totals vs their desired-hours target. Employees appear
+  // when they have draft shifts or a target set, so under-scheduled people
+  // with a preference are visible too.
+  const weeklyHoursRows = useMemo((): WeeklyHoursRow[] => {
+    const byId = new Map(summarizeWeeklyHours(drafts, dates).map((s) => [s.employeeId, s]));
+    const rows: WeeklyHoursRow[] = [];
+    for (const emp of employees) {
+      const s = byId.get(emp.id);
+      const desiredMinutes = emp.desired_hours != null ? emp.desired_hours * 60 : null;
+      if (!s && desiredMinutes === null) continue;
+      const totalMinutes = s?.totalMinutes ?? 0;
+      rows.push({
+        employeeId: emp.id,
+        employeeName: formatDisplayName(emp.name),
+        totalMinutes,
+        totalHours: Math.round((totalMinutes / 60) * 10) / 10,
+        overtimeMinutes: s?.overtimeMinutes ?? 0,
+        isOvertime: s?.isOvertime ?? false,
+        desiredMinutes,
+      });
+    }
+    rows.sort((a, b) => b.totalMinutes - a.totalMinutes || a.employeeId - b.employeeId);
+    return rows;
+  }, [drafts, dates, employees]);
 
   // ---- Mutations ----
   async function handleSaveShift(employeeId: number, draftId: number | null, startMinutes: number, endMinutes: number, override = false) {
@@ -663,6 +690,13 @@ export default function DraftPageClient() {
                 </>
               )}
             </div>
+
+            {/* Week totals vs desired-hours targets */}
+            {!isLoading && weeklyHoursRows.length > 0 && (
+              <div className="mb-4">
+                <WeeklyHoursSummary employees={weeklyHoursRows} />
+              </div>
+            )}
           </div>
         </div>
 

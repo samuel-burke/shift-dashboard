@@ -32,6 +32,22 @@ describe("WeeklyHoursSummary", () => {
     expect(screen.getByText(/1 in overtime/i)).toBeInTheDocument();
   });
 
+  it("shows the desired-hours target when present", () => {
+    render(
+      <WeeklyHoursSummary
+        employees={[
+          { employeeId: 4, employeeName: "Riley M", totalMinutes: 1440, totalHours: 24, overtimeMinutes: 0, isOvertime: false, desiredMinutes: 1920 },
+        ]}
+      />
+    );
+    expect(screen.getByTestId("weekly-hours-row-4")).toHaveTextContent("24h / 32h");
+  });
+
+  it("omits the target for employees without a preference", () => {
+    render(<WeeklyHoursSummary employees={rows} />);
+    expect(screen.getByTestId("weekly-hours-row-2")).not.toHaveTextContent("/");
+  });
+
   it("formats partial overtime hours with minutes", () => {
     render(
       <WeeklyHoursSummary

@@ -56,7 +56,10 @@ export async function DELETE(
   // auto-managed draft week containing it. Never fails the rescind.
   const calloutDate = typeof callout.date === "string" ? callout.date.slice(0, 10) : String(callout.date);
   try {
-    await resyncAutoDrafts(supabase, orgId, { dates: [calloutDate] });
+    await resyncAutoDrafts(supabase, orgId, {
+      dates: [calloutDate],
+      notifyReason: "A rescinded call-out",
+    });
   } catch (e) {
     console.error("[api/callouts/[id]] auto-schedule resync failed", e);
   }

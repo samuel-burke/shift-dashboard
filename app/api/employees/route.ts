@@ -138,7 +138,7 @@ export async function PATCH(request: Request) {
   // auto-managed draft weeks. Never fails the update.
   if (desiredHours !== undefined) {
     try {
-      await resyncAutoDrafts(supabase, orgId!);
+      await resyncAutoDrafts(supabase, orgId!, { notifyReason: "A desired-hours change" });
     } catch (e) {
       console.error("[api/employees] auto-schedule resync failed", e);
     }

@@ -5,6 +5,9 @@ export type Employee = {
   name: string;
   email?: string;
   user_id?: string | null;
+  // Desired weekly hours — soft target for the auto-scheduler. Present on
+  // /api/employees responses; null/absent = no preference.
+  desired_hours?: number | null;
 };
 
 export function formatDisplayName(name: string): string {

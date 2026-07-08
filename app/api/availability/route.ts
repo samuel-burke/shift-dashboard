@@ -14,7 +14,7 @@ type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
 // Never fails the availability write.
 async function resync(supabase: SupabaseClient, orgId: string) {
   try {
-    await resyncAutoDrafts(supabase, orgId);
+    await resyncAutoDrafts(supabase, orgId, { notifyReason: "An availability change" });
   } catch (e) {
     console.error("[api/availability] auto-schedule resync failed", e);
   }

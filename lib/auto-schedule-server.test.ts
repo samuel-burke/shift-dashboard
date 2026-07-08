@@ -1,6 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { syncAutoDraftsForWeek, resyncAutoDrafts, weekStartFor } from "./auto-schedule-server";
+import { notifyManagers } from "./notify";
 import { makeSupabaseClient, MOCK_ORG_ID } from "../app/api/__tests__/helpers";
+
+vi.mock("./notify", () => ({ notifyManagers: vi.fn().mockResolvedValue(undefined) }));
+
+beforeEach(() => {
+  vi.mocked(notifyManagers).mockClear();
+});
 
 // 2026-01-05 is a Monday.
 const WEEK_START = "2026-01-05";
@@ -170,6 +177,89 @@ describe("resyncAutoDrafts", () => {
     const inserted = draftBuilders(client).find(({ builder }) => builder.insert.mock.calls.length > 0);
     expect(inserted).toBeDefined();
     expect(inserted!.builder.insert.mock.calls[0][0][0]).toMatchObject({ source: "auto", date: WEEK_START });
+  });
+
+  it("notifies managers when a resync with a reason changes drafts", async () => {
+    const client = makeSupabaseClient({
+      tableOverrides: {
+        draft_schedules: {
+          data: [{ id: 42, employee_id: 1, date: "2026-01-06", start_minutes: 600, end_minutes: 900, source: "auto" }],
+          error: null,
+        },
+        ...EMPTY_INPUT_TABLES,
+        ...COVERAGE_TABLES,
+      },
+    });
+
+    await resyncAutoDrafts(client as never, MOCK_ORG_ID, {
+      dates: ["2026-01-07"],
+      notifyReason: "A call-out",
+    });
+
+    expect(notifyManagers).toHaveBeenCalledWith(
+      client,
+      MOCK_ORG_ID,
+      "shift_change",
+      "Draft Schedule Updated",
+      expect.stringContaining("A call-out changed the auto-generated draft schedule for the week of 2026-01-05"),
+      { weeks: ["2026-01-05"] }
+    );
+  });
+
+  it("mentions remaining coverage gaps in the notification", async () => {
+    const client = makeSupabaseClient({
+      tableOverrides: {
+        draft_schedules: {
+          data: [{ id: 9, employee_id: 1, date: WEEK_START, start_minutes: 540, end_minutes: 1020, source: "auto" }],
+          error: null,
+        },
+        ...EMPTY_INPUT_TABLES,
+        // The only employee is now off Monday: the auto draft is removed and
+        // the curve can't be covered.
+        time_off_requests: { data: [{ employee_id: 1, date: WEEK_START }], error: null },
+        ...COVERAGE_TABLES,
+      },
+    });
+
+    await resyncAutoDrafts(client as never, MOCK_ORG_ID, { notifyReason: "A time-off approval" });
+
+    expect(notifyManagers).toHaveBeenCalledWith(
+      client,
+      MOCK_ORG_ID,
+      "shift_change",
+      "Draft Schedule Updated",
+      expect.stringContaining("1 coverage gap needs attention"),
+      expect.anything()
+    );
+  });
+
+  it("stays silent when no reason is given", async () => {
+    const client = makeSupabaseClient({
+      tableOverrides: {
+        draft_schedules: {
+          data: [{ id: 42, employee_id: 1, date: "2026-01-06", start_minutes: 600, end_minutes: 900, source: "auto" }],
+          error: null,
+        },
+        ...EMPTY_INPUT_TABLES,
+        ...COVERAGE_TABLES,
+      },
+    });
+
+    await resyncAutoDrafts(client as never, MOCK_ORG_ID, { dates: ["2026-01-07"] });
+    expect(notifyManagers).not.toHaveBeenCalled();
+  });
+
+  it("stays silent when the resync changes nothing", async () => {
+    const client = makeSupabaseClient({
+      tableOverrides: {
+        draft_schedules: { data: [], error: null },
+        ...EMPTY_INPUT_TABLES,
+        ...COVERAGE_TABLES,
+      },
+    });
+
+    await resyncAutoDrafts(client as never, MOCK_ORG_ID, { notifyReason: "A call-out" });
+    expect(notifyManagers).not.toHaveBeenCalled();
   });
 
   it("skips weeks unrelated to the changed dates", async () => {

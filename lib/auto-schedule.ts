@@ -10,6 +10,8 @@
 //   - one shift per employee per day (matches draft_schedules' unique key)
 //   - weekly overtime cap (default 40h): never exceeded, counting fixed
 //     shifts (manual drafts + already-published schedules) toward the total
+//   - minimum rest between shifts on consecutive days (default 10h): nobody
+//     closes and then opens the next morning ("clopening")
 //   - shift length: between min and max (defaults 4h–8h)
 //   - desired weekly hours: soft target — employees under their target are
 //     preferred, and an auto shift is not extended past it
@@ -22,6 +24,7 @@ import { WEEKLY_OVERTIME_THRESHOLD_MINUTES } from "./schedule-hours";
 
 export const DEFAULT_MIN_SHIFT_MINUTES = 4 * 60;
 export const DEFAULT_MAX_SHIFT_MINUTES = 8 * 60;
+export const DEFAULT_MIN_REST_MINUTES = 10 * 60;
 
 export type AutoScheduleEmployee = {
   id: number;
@@ -59,6 +62,8 @@ export type AutoScheduleInput = {
   maxShiftMinutes?: number;
   /** Hard weekly cap per employee, in minutes. Default: 40h. */
   weeklyLimitMinutes?: number;
+  /** Minimum rest between shifts on consecutive days. Default: 10h; 0 disables. */
+  minRestMinutes?: number;
 };
 
 export type AutoScheduleResult = {
@@ -80,17 +85,36 @@ function availabilityWindow(
   return { start: rule.startMinutes, end: rule.endMinutes };
 }
 
+function addDays(date: string, n: number): string {
+  const d = new Date(date + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 export function generateAutoSchedule(input: AutoScheduleInput): AutoScheduleResult {
   const minShift = input.minShiftMinutes ?? DEFAULT_MIN_SHIFT_MINUTES;
   const maxShift = input.maxShiftMinutes ?? DEFAULT_MAX_SHIFT_MINUTES;
   const weeklyLimit = input.weeklyLimitMinutes ?? WEEKLY_OVERTIME_THRESHOLD_MINUTES;
+  const minRest = input.minRestMinutes ?? DEFAULT_MIN_REST_MINUTES;
 
   const rules = new Map(input.availability.map((r) => [`${r.employeeId}|${r.dayOfWeek}`, r]));
   const blockedDates = new Set(input.unavailableDates.map((u) => `${u.employeeId}|${u.date.slice(0, 10)}`));
 
+  // Per employee-day shift bounds, for the rest rule between consecutive days.
+  // Days are generated in order, so "yesterday" sees generated shifts too,
+  // while "tomorrow" can only be constrained by fixed shifts.
+  const latestEnd = new Map<string, number>();
+  const earliestStart = new Map<string, number>();
+  const noteShift = (employeeId: number, date: string, start: number, end: number) => {
+    const key = `${employeeId}|${date}`;
+    latestEnd.set(key, Math.max(latestEnd.get(key) ?? 0, end));
+    earliestStart.set(key, Math.min(earliestStart.get(key) ?? 1440, start));
+  };
+
   const weekDatesSet = new Set(input.dates);
   const assignedMinutes = new Map<number, number>(input.employees.map((e) => [e.id, 0]));
   for (const f of input.fixedShifts) {
+    noteShift(f.employeeId, f.date.slice(0, 10), f.startMinutes, f.endMinutes);
     if (!weekDatesSet.has(f.date.slice(0, 10))) continue;
     if (!assignedMinutes.has(f.employeeId)) continue;
     assignedMinutes.set(f.employeeId, assignedMinutes.get(f.employeeId)! + (f.endMinutes - f.startMinutes));
@@ -133,6 +157,7 @@ export function generateAutoSchedule(input: AutoScheduleInput): AutoScheduleResu
         generated.push({ employeeId: candidate.id, date, startMinutes: t, endMinutes: end });
         addSupply(t, end);
         workingToday.add(candidate.id);
+        noteShift(candidate.id, date, t, end);
         assignedMinutes.set(candidate.id, assignedMinutes.get(candidate.id)! + (end - t));
       }
     }
@@ -152,6 +177,12 @@ export function generateAutoSchedule(input: AutoScheduleInput): AutoScheduleResu
         if (!win || t < win.start || t + minShift > win.end) continue;
         const assigned = assignedMinutes.get(emp.id)!;
         if (assigned + minShift > weeklyLimit) continue;
+        // Rest rule: enough downtime since yesterday's shift, and even the
+        // minimum shift must leave enough before tomorrow's fixed start.
+        const prevEnd = latestEnd.get(`${emp.id}|${addDays(date, -1)}`);
+        if (prevEnd !== undefined && 1440 - prevEnd + t < minRest) continue;
+        const nextStart = earliestStart.get(`${emp.id}|${addDays(date, 1)}`);
+        if (nextStart !== undefined && 1440 - (t + minShift) + nextStart < minRest) continue;
         const desired = desiredMinutes.get(emp.id) ?? null;
         const overDesired = desired !== null && assigned >= desired ? 1 : 0;
         const fillRatio = assigned / Math.max(desired ?? weeklyLimit, 1);
@@ -176,6 +207,10 @@ export function generateAutoSchedule(input: AutoScheduleInput): AutoScheduleResu
       const assigned = assignedMinutes.get(emp.id)!;
       const desired = desiredMinutes.get(emp.id) ?? null;
       let hardCap = Math.min(start + maxShift, win.end, weeklyLimit - assigned + start, 1440);
+      // Don't extend into tomorrow's rest window (pickCandidate already
+      // guarantees the minimum shift fits).
+      const nextStart = earliestStart.get(`${emp.id}|${addDays(date, 1)}`);
+      if (nextStart !== undefined) hardCap = Math.min(hardCap, 1440 + nextStart - minRest);
       // Soft-stop at the desired weekly target, but never below the minimum.
       if (desired !== null) hardCap = Math.min(hardCap, Math.max(start + minShift, desired - assigned + start));
       let end = start + minShift;

@@ -55,7 +55,10 @@ export async function PUT(
   if (pto?.date) {
     const ptoDate = typeof pto.date === "string" ? pto.date.slice(0, 10) : String(pto.date);
     try {
-      await resyncAutoDrafts(supabase, orgId!, { dates: [ptoDate] });
+      await resyncAutoDrafts(supabase, orgId!, {
+        dates: [ptoDate],
+        notifyReason: status === "approved" ? "A time-off approval" : "A time-off decision",
+      });
     } catch (e) {
       console.error("[api/time-off/[id]] auto-schedule resync failed", e);
     }

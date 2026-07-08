@@ -10,13 +10,15 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { generateAutoSchedule, type FixedShift } from "./auto-schedule";
+import { AUTO_SCHEDULE_POLICY_KEYS, parseAutoSchedulePolicy } from "./auto-schedule-policy";
 import { curveForDate, type CoverageBlock, type CoverageProfile } from "./coverage";
 import { dayOfWeek, weekDates } from "./draft-metrics";
+import { notifyManagers } from "./notify";
 import { withOrgAll } from "./org-scope";
 
 // Route handlers pass the client created by lib/supabase-server; keeping the
-// parameter loosely typed (only `.from` is used) lets tests inject mocks.
-type Db = Pick<SupabaseClient, "from">;
+// parameter loosely typed (only `.from`/`.rpc` are used) lets tests inject mocks.
+type Db = Pick<SupabaseClient, "from" | "rpc">;
 
 export type AutoSyncResult = {
   created: number;
@@ -63,6 +65,7 @@ export async function syncAutoDraftsForWeek(
     { data: blocks, error: blocksError },
     { data: dayDefaults, error: dayDefaultsError },
     { data: dateOverrides, error: dateOverridesError },
+    { data: policyRows, error: policyError },
   ] = await Promise.all([
     supabase.from("employees").select("id, desired_hours").eq("org_id", orgId),
     supabase.from("availability").select("employee_id, day_of_week, start_minutes, end_minutes").eq("org_id", orgId),
@@ -73,12 +76,18 @@ export async function syncAutoDraftsForWeek(
     supabase.from("coverage_profile_blocks").select("profile_id, start_minutes, end_minutes, headcount").eq("org_id", orgId).order("start_minutes"),
     supabase.from("coverage_day_defaults").select("day_of_week, profile_id").eq("org_id", orgId),
     supabase.from("coverage_date_overrides").select("date, profile_id").eq("org_id", orgId).gte("date", dates[0]).lte("date", dates[6]),
+    supabase.from("app_settings").select("key, value").eq("org_id", orgId).in("key", AUTO_SCHEDULE_POLICY_KEYS),
   ]);
 
   const loadError =
     employeesError ?? availabilityError ?? timeOffError ?? calloutsError ??
-    publishedError ?? profilesError ?? blocksError ?? dayDefaultsError ?? dateOverridesError;
+    publishedError ?? profilesError ?? blocksError ?? dayDefaultsError ??
+    dateOverridesError ?? policyError;
   if (loadError) throw loadError;
+
+  const policy = parseAutoSchedulePolicy(
+    Object.fromEntries((Array.isArray(policyRows) ? policyRows : []).map((r) => [r.key, r.value]))
+  );
 
   const blocksByProfile = new Map<number, CoverageBlock[]>();
   for (const b of blocks ?? []) {
@@ -119,6 +128,10 @@ export async function syncAutoDraftsForWeek(
       date: dateKey(r.date),
     })),
     fixedShifts,
+    minShiftMinutes: policy.minShiftMinutes,
+    maxShiftMinutes: policy.maxShiftMinutes,
+    minRestMinutes: policy.minRestMinutes,
+    weeklyLimitMinutes: policy.maxWeekMinutes,
   });
 
   if (autoDrafts.length > 0) {
@@ -163,6 +176,13 @@ const MAX_WEEKS_PER_SYNC = 12;
  * approval affects one day); omit it for org-wide changes like editing a
  * coverage profile or a day-of-week default.
  *
+ * `notifyReason` (a sentence subject like "A time-off approval") makes the
+ * resync tell the org's managers when it actually changed something. Hooks
+ * for changes made away from the draft planner pass it — call-outs,
+ * availability edits, time-off decisions — so the schedule never shifts
+ * silently. Planner-adjacent changes (coverage edits, settings) omit it: the
+ * manager is looking at the drafts as they update.
+ *
  * Only weeks from today onward that already contain auto drafts are touched.
  * Errors are swallowed by the caller pattern (`.catch`) — a failed resync
  * must never fail the mutation that triggered it.
@@ -170,7 +190,7 @@ const MAX_WEEKS_PER_SYNC = 12;
 export async function resyncAutoDrafts(
   supabase: Db,
   orgId: string,
-  { dates }: { dates?: string[] } = {}
+  { dates, notifyReason }: { dates?: string[]; notifyReason?: string } = {}
 ): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -196,7 +216,34 @@ export async function resyncAutoDrafts(
     weeks = weeks.filter((w) => affected.has(w));
   }
 
+  const changedWeeks: string[] = [];
+  let unfilledCount = 0;
   for (const weekStart of weeks.slice(0, MAX_WEEKS_PER_SYNC)) {
-    await syncAutoDraftsForWeek(supabase, orgId, weekStart, { onlyIfAuto: true });
+    const result = await syncAutoDraftsForWeek(supabase, orgId, weekStart, { onlyIfAuto: true });
+    if (result && (result.created > 0 || result.removed > 0)) {
+      changedWeeks.push(weekStart);
+      unfilledCount += result.unfilled.length;
+    }
+  }
+
+  if (notifyReason && changedWeeks.length > 0) {
+    const scope = changedWeeks.length === 1
+      ? `the week of ${changedWeeks[0]}`
+      : `${changedWeeks.length} weeks`;
+    const gaps = unfilledCount > 0
+      ? ` ${unfilledCount} coverage gap${unfilledCount === 1 ? "" : "s"} need${unfilledCount === 1 ? "s" : ""} attention.`
+      : "";
+    try {
+      await notifyManagers(
+        supabase as SupabaseClient,
+        orgId,
+        "shift_change",
+        "Draft Schedule Updated",
+        `${notifyReason} changed the auto-generated draft schedule for ${scope}.${gaps}`,
+        { weeks: changedWeeks }
+      );
+    } catch (e) {
+      console.error("[auto-schedule] resync notification failed", e);
+    }
   }
 }

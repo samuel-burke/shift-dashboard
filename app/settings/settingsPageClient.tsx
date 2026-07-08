@@ -17,6 +17,7 @@ import { useTheme, type ThemeMode } from "../../components/ThemeProvider";
 import { useAppData } from "../../lib/AppDataContext";
 import { isSoundEnabled, setSoundEnabled as persistSoundEnabled } from "../../lib/sound-preference";
 import { DEFAULT_PUNCH_POLICY, type PunchPolicy } from "../../lib/punch-policy";
+import { DEFAULT_AUTO_SCHEDULE_POLICY, type AutoSchedulePolicy } from "../../lib/auto-schedule-policy";
 
 type NominatimAddress = {
   house_number?: string; road?: string;
@@ -443,6 +444,31 @@ export default function SettingsPageClient({
     }
   }
 
+  // ── Auto-Scheduling ─────────────────────────────────────────────────────────
+  const [autoPolicy, setAutoPolicy] = useState<AutoSchedulePolicy>(DEFAULT_AUTO_SCHEDULE_POLICY);
+  const [autoPolicyStatus, setAutoPolicyStatus] = useState<SaveStatus>("idle");
+
+  // Optimistically apply a policy patch, then persist it. Reverts on failure.
+  // Saving also re-runs generation for any auto-managed draft weeks server-side.
+  async function saveAutoPolicy(patch: Partial<AutoSchedulePolicy>) {
+    const prev = autoPolicy;
+    setAutoPolicy((p) => ({ ...p, ...patch }));
+    setAutoPolicyStatus("saving");
+    const res = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoSchedule: patch }),
+    }).catch(() => null);
+    if (res?.ok) {
+      setAutoPolicyStatus("saved");
+      setTimeout(() => setAutoPolicyStatus("idle"), 2000);
+    } else {
+      setAutoPolicy(prev);
+      setAutoPolicyStatus("error");
+      setTimeout(() => setAutoPolicyStatus("idle"), 4000);
+    }
+  }
+
   // ── Employees ───────────────────────────────────────────────────────────────
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -651,6 +677,7 @@ export default function SettingsPageClient({
           setAddressInput(s.geofenceAddress);
         }
         if (s.punchPolicy) setPunchPolicy(s.punchPolicy);
+        if (s.autoSchedule) setAutoPolicy(s.autoSchedule);
       })
       .catch(() => {});
     fetch("/api/employees")
@@ -1344,6 +1371,52 @@ export default function SettingsPageClient({
             </div>
 
             <SaveStatusText status={punchPolicyStatus} testId="punch-policy-status" />
+          </div>
+        </section>}
+
+        {/* Auto-Scheduling — manager only. Knobs for the draft schedule
+            generator; changing one re-runs generation for auto-managed weeks. */}
+        {isManager && <section>
+          <div className="text-[11px] text-slate-400 font-semibold tracking-wider uppercase mb-2 px-1">
+            Auto-Scheduling
+          </div>
+          <div className="bg-card rounded-2xl border border-slate-800/60 px-4 py-4 space-y-4">
+            {([
+              { field: "minShiftMinutes", label: "Min Shift Length",  desc: "Shortest shift the generator may create",                   min: 1, max: 16 },
+              { field: "maxShiftMinutes", label: "Max Shift Length",  desc: "Longest shift the generator may create",                    min: 1, max: 16 },
+              { field: "minRestMinutes",  label: "Min Rest Between Shifts", desc: "No closing then opening the next morning · 0 = off",  min: 0, max: 24 },
+              { field: "maxWeekMinutes",  label: "Max Hours Per Week", desc: "Hard weekly cap — overtime prevention",                    min: 1, max: 80 },
+            ] as { field: keyof AutoSchedulePolicy; label: string; desc: string; min: number; max: number }[]).map(
+              ({ field, label, desc, min, max }, i, arr) => (
+                <div key={field} className={`flex items-center justify-between gap-3 ${i < arr.length - 1 ? "pb-4 border-b border-slate-800/60" : ""}`}>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-200">{label}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{desc}</div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <input
+                      type="number"
+                      min={min}
+                      max={max}
+                      step={0.25}
+                      aria-label={`${label} in hours`}
+                      value={autoPolicy[field] / 60}
+                      onChange={(e) => setAutoPolicy((p) => ({ ...p, [field]: Number(e.target.value) * 60 }))}
+                      onBlur={(e) => {
+                        // Snap to the generator's 15-minute grid and save.
+                        const hours = clamp(Number(e.target.value) || 0, min, max);
+                        const minutes = Math.round((hours * 60) / 15) * 15;
+                        saveAutoPolicy({ [field]: minutes } as Partial<AutoSchedulePolicy>);
+                      }}
+                      className="w-16 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-100 text-right tabular-nums focus:outline-none focus:border-indigo-500/70"
+                    />
+                    <span className="text-xs text-slate-500">hrs</span>
+                  </div>
+                </div>
+              )
+            )}
+
+            <SaveStatusText status={autoPolicyStatus} testId="auto-policy-status" />
           </div>
         </section>}
 

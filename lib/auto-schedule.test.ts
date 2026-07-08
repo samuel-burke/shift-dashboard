@@ -195,6 +195,72 @@ describe("generateAutoSchedule", () => {
     expect(result.shifts.filter((s) => s.date === WEEK[1])).toHaveLength(1);
   });
 
+  it("does not schedule an opener after a close without enough rest", () => {
+    // Emp 1 closes Monday 2 PM – 10 PM (fixed). Tuesday's curve opens at 6 AM.
+    // With the default 10h rest, emp 1 could start Tuesday no earlier than 8 AM,
+    // so the 6 AM opener must go to emp 2.
+    const result = generateAutoSchedule(baseInput({
+      curves: { [WEEK[1]]: [block(1, 360, 840)] }, // Tue 6 AM – 2 PM
+      employees: [{ id: 1 }, { id: 2 }],
+      fixedShifts: [{ employeeId: 1, date: MON, startMinutes: 840, endMinutes: 1320 }],
+    }));
+    expect(result.shifts).toHaveLength(1);
+    expect(result.shifts[0].employeeId).toBe(2);
+  });
+
+  it("delays the next-day start until the rest window has passed", () => {
+    // Only emp 1 exists and they close Monday at 10 PM. Tuesday coverage from
+    // 6 AM: the earliest allowed start is 8 AM (10h after 10 PM).
+    const result = generateAutoSchedule(baseInput({
+      curves: { [WEEK[1]]: [block(1, 360, 840)] },
+      employees: [{ id: 1 }],
+      fixedShifts: [{ employeeId: 1, date: MON, startMinutes: 840, endMinutes: 1320 }],
+    }));
+    expect(result.shifts).toHaveLength(1);
+    expect(result.shifts[0].startMinutes).toBe(480); // 8 AM
+    expect(result.unfilled).toEqual([
+      { date: WEEK[1], startMinutes: 360, endMinutes: 480, shortfall: 1 },
+    ]);
+  });
+
+  it("stops extending a shift that would collide with tomorrow's early fixed start", () => {
+    // Emp 1 has a fixed 6 AM start on Tuesday. Monday's curve runs late; their
+    // Monday shift must end by 8 PM (10h before 6 AM).
+    const result = generateAutoSchedule(baseInput({
+      curves: { [MON]: [block(1, 720, 1380)] }, // Mon noon – 11 PM
+      employees: [{ id: 1 }],
+      fixedShifts: [{ employeeId: 1, date: WEEK[1], startMinutes: 360, endMinutes: 840 }],
+    }));
+    expect(result.shifts).toHaveLength(1);
+    expect(result.shifts[0].endMinutes).toBeLessThanOrEqual(1200); // 8 PM
+  });
+
+  it("allows clopening when minRestMinutes is 0", () => {
+    const result = generateAutoSchedule(baseInput({
+      curves: { [WEEK[1]]: [block(1, 360, 840)] },
+      employees: [{ id: 1 }],
+      fixedShifts: [{ employeeId: 1, date: MON, startMinutes: 840, endMinutes: 1320 }],
+      minRestMinutes: 0,
+    }));
+    expect(result.shifts).toHaveLength(1);
+    expect(result.shifts[0].startMinutes).toBe(360); // 6 AM sharp
+  });
+
+  it("applies the rest rule between two generated shifts on consecutive days", () => {
+    // Single employee; Monday's curve ends at midnight, Tuesday's starts at
+    // 6 AM. Monday's generated closer must push Tuesday's start past the rest.
+    const result = generateAutoSchedule(baseInput({
+      curves: {
+        [MON]: [block(1, 960, 1440)],     // Mon 4 PM – midnight
+        [WEEK[1]]: [block(1, 360, 840)],  // Tue 6 AM – 2 PM
+      },
+      employees: [{ id: 1 }],
+    }));
+    const mon = result.shifts.find((s) => s.date === MON)!;
+    const tue = result.shifts.find((s) => s.date === WEEK[1])!;
+    expect(1440 - mon.endMinutes + tue.startMinutes).toBeGreaterThanOrEqual(600);
+  });
+
   it("is deterministic", () => {
     const input = baseInput({
       curves: Object.fromEntries(WEEK.map((d) => [d, [block(2, 480, 1200)]])),
