@@ -17,6 +17,7 @@ A mobile-first shift management app for scheduling, time clock, coverage analyti
 
 **Scheduling**
 - Week and month views with drag-free editing, reusable shift templates, and copy-week
+- Auto-generated draft schedules — one tap fills a week from the coverage curves, respecting availability, approved time off, call-outs, desired weekly hours, minimum rest between shifts (no "clopening"), and the weekly overtime cap; auto-managed weeks regenerate on the fly when any of those inputs change (managers get notified), while manually placed shifts stay put. Shift lengths, rest, and the weekly cap are tunable per organization in Settings
 - Employee availability tracking with conflict detection against time-off and availability when scheduling
 - Shift swap requests with manager approval, and time-off requests with approval workflow
 - Employee call-outs — one tap to report "I can't make it in" for a day; managers are notified instantly and the person shows as **Called Out** across the dashboard, schedule, and team status

@@ -8,6 +8,9 @@ export type Employee = {
   email?: string;
   user_id?: string | null;
   job_code?: JobCode;
+  // Desired weekly hours — soft target for the auto-scheduler. Present on
+  // /api/employees responses; null/absent = no preference.
+  desired_hours?: number | null;
 };
 
 export function formatDisplayName(name: string): string {
@@ -30,6 +33,9 @@ export type Schedule = {
   date: string;
   startMinutes: number;
   endMinutes: number;
+  // Draft shifts only: 'auto' = created by the auto-scheduler and regenerated
+  // when its inputs change; 'manual' (or absent) = placed by a manager.
+  source?: "manual" | "auto";
 };
 
 // Derived — computed from clock-in/out times and store hours

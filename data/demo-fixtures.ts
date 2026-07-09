@@ -3,19 +3,22 @@
 // them into real rows in the demo org (see docs/DEMO_ORG.md).
 import type { Employee, AvailabilityRecord } from "./types";
 
+// desired_hours feeds the auto-scheduler: a mix of full-timers (~40h),
+// part-timers, and no-preference rows so the planner's hours panel and the
+// generator's fairness ranking have something realistic to show.
 export const DEMO_EMPLOYEES: Employee[] = [
-  { id: 1,  name: "Jordan Martinez", email: "jordan@example.com",  user_id: "demo-manager"  },
-  { id: 2,  name: "Casey Lewis",     email: "casey@example.com",   user_id: "demo-user-2"   },
-  { id: 3,  name: "Alex Rivera",     email: "alex@example.com",    user_id: null             },
-  { id: 4,  name: "Sam Kim",         email: "sam@example.com",     user_id: "demo-user-4"   },
-  { id: 5,  name: "Morgan Brooks",   email: "morgan@example.com",  user_id: "demo-user-5"   },
-  { id: 6,  name: "Taylor Nguyen",                                 user_id: null             },
-  { id: 7,  name: "Riley Chen",      email: "riley@example.com",   user_id: null             },
-  { id: 8,  name: "Dakota Patel",    email: "dakota@example.com",  user_id: null             },
-  { id: 9,  name: "Jamie Flores",    email: "jamie@example.com",   user_id: null             },
-  { id: 10, name: "Avery Johnson",   email: "avery@example.com",   user_id: null             },
-  { id: 11, name: "Quinn O'Brien",   email: "quinn@example.com",   user_id: null             },
-  { id: 12, name: "Harper Singh",                                  user_id: null             },
+  { id: 1,  name: "Jordan Martinez", email: "jordan@example.com",  user_id: "demo-manager",  desired_hours: 40   },
+  { id: 2,  name: "Casey Lewis",     email: "casey@example.com",   user_id: "demo-user-2",   desired_hours: 40   },
+  { id: 3,  name: "Alex Rivera",     email: "alex@example.com",    user_id: null,             desired_hours: 32   },
+  { id: 4,  name: "Sam Kim",         email: "sam@example.com",     user_id: "demo-user-4",   desired_hours: 24   },
+  { id: 5,  name: "Morgan Brooks",   email: "morgan@example.com",  user_id: "demo-user-5",   desired_hours: 40   },
+  { id: 6,  name: "Taylor Nguyen",                                 user_id: null,             desired_hours: 16   },
+  { id: 7,  name: "Riley Chen",      email: "riley@example.com",   user_id: null,             desired_hours: 32   },
+  { id: 8,  name: "Dakota Patel",    email: "dakota@example.com",  user_id: null,             desired_hours: null },
+  { id: 9,  name: "Jamie Flores",    email: "jamie@example.com",   user_id: null,             desired_hours: 24   },
+  { id: 10, name: "Avery Johnson",   email: "avery@example.com",   user_id: null,             desired_hours: 40   },
+  { id: 11, name: "Quinn O'Brien",   email: "quinn@example.com",   user_id: null,             desired_hours: 20   },
+  { id: 12, name: "Harper Singh",                                  user_id: null,             desired_hours: null },
 ];
 
 // Weekly shift pattern per employee: day-of-week (0=Sun) → [startMinutes, endMinutes] | null.

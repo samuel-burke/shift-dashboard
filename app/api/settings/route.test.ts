@@ -3,6 +3,7 @@ import { GET, PUT } from "./route";
 import { createClient } from "@/lib/supabase-server";
 import { makeSupabaseClient, MOCK_USER, MOCK_ORG_ID } from "../__tests__/helpers";
 import { DEFAULT_PUNCH_POLICY } from "@/lib/punch-policy";
+import { DEFAULT_AUTO_SCHEDULE_POLICY } from "@/lib/auto-schedule-policy";
 
 vi.mock("@/lib/supabase-server", () => ({ createClient: vi.fn() }));
 vi.mock("next/server", () => ({
@@ -53,6 +54,7 @@ describe("GET /api/settings", () => {
       geofenceRadius: 100,
       geofenceAddress: null,
       punchPolicy: DEFAULT_PUNCH_POLICY,
+      autoSchedule: DEFAULT_AUTO_SCHEDULE_POLICY,
     });
     expect(body).not.toHaveProperty("optimalCoverage");
     expect(body).not.toHaveProperty("minCoverage");
@@ -87,6 +89,7 @@ describe("GET /api/settings", () => {
       geofenceRadius: 100,
       geofenceAddress: null,
       punchPolicy: DEFAULT_PUNCH_POLICY,
+      autoSchedule: DEFAULT_AUTO_SCHEDULE_POLICY,
     });
     expect(body).not.toHaveProperty("optimalCoverage");
     expect(body).not.toHaveProperty("minCoverage");
@@ -256,6 +259,34 @@ describe("PUT /api/settings", () => {
     const res = await PUT(putReq({ gpsRequired: 1 }));
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: expect.stringContaining("gpsRequired") });
+  });
+
+  // ── autoSchedule policy ─────────────────────────────────────────────────────
+
+  it("returns 200 when updating the auto-schedule policy", async () => {
+    const res = await PUT(putReq({
+      autoSchedule: { minShiftMinutes: 180, maxShiftMinutes: 600, minRestMinutes: 480, maxWeekMinutes: 2100 },
+    }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it("returns 400 when autoSchedule is not an object", async () => {
+    const res = await PUT(putReq({ autoSchedule: "eight hours" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("autoSchedule") });
+  });
+
+  it("returns 400 for an out-of-range auto-schedule value", async () => {
+    const res = await PUT(putReq({ autoSchedule: { minShiftMinutes: 30 } }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("minShiftMinutes") });
+  });
+
+  it("returns 400 when min shift exceeds max shift", async () => {
+    const res = await PUT(putReq({ autoSchedule: { minShiftMinutes: 600, maxShiftMinutes: 300 } }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("must not exceed") });
   });
 
   // ── DB error ─────────────────────────────────────────────────────────────────

@@ -5,6 +5,8 @@ import { getOrgContext } from "@/lib/org-context";
 import { withOrgAll } from "@/lib/org-scope";
 import { writeAuditLog } from "@/lib/audit";
 import { parsePunchPolicy, punchPolicyRows } from "@/lib/punch-policy";
+import { parseAutoSchedulePolicy, autoSchedulePolicyRows } from "@/lib/auto-schedule-policy";
+import { resyncAutoDraftsAsService } from "@/lib/auto-schedule-server";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +47,7 @@ export async function GET(request?: Request) {
     geofenceRadius:       parseInt(map.geofence_radius ?? "100"),
     geofenceAddress:      map.geofence_address || null,
     punchPolicy:          parsePunchPolicy(map),
+    autoSchedule:         parseAutoSchedulePolicy(map),
   });
 }
 
@@ -141,6 +144,16 @@ export async function PUT(request: Request) {
     rows.push(...policyRows);
   }
 
+  // Auto-scheduling policy — numeric knobs for the schedule generator.
+  // Validated and converted to individual app_settings rows.
+  if (body.autoSchedule !== undefined) {
+    if (typeof body.autoSchedule !== "object" || body.autoSchedule === null)
+      return NextResponse.json({ error: "autoSchedule must be an object" }, { status: 400 });
+    const { rows: policyRows, error: policyError } = autoSchedulePolicyRows(body.autoSchedule);
+    if (policyError) return NextResponse.json({ error: policyError }, { status: 400 });
+    rows.push(...policyRows);
+  }
+
   if (rows.length === 0)
     return NextResponse.json({ error: "No valid fields provided" }, { status: 400 });
 
@@ -151,6 +164,16 @@ export async function PUT(request: Request) {
   if (error) {
     console.error("[api/settings]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+
+  // New generator knobs change what a valid schedule looks like — re-run
+  // generation for the auto-managed draft weeks. Never fails the settings save.
+  if (body.autoSchedule !== undefined) {
+    try {
+      await resyncAutoDraftsAsService(orgId!);
+    } catch (e) {
+      console.error("[api/settings] auto-schedule resync failed", e);
+    }
   }
 
   writeAuditLog({

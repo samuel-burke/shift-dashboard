@@ -25,6 +25,8 @@ import {
 import AppShell from "../../components/AppShell";
 import BottomNav from "../../components/BottomNav";
 import DraftShiftSheet from "../../components/DraftShiftSheet";
+import WeeklyHoursSummary, { WeeklyHoursRow } from "../../components/WeeklyHoursSummary";
+import { summarizeWeeklyHours } from "../../lib/schedule-hours";
 import { createApiFetch } from "@/lib/api-fetch";
 
 // recharts is heavy; code-split both planner charts out of the route's
@@ -130,6 +132,8 @@ export default function DraftPageClient() {
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{ published: number; skipped: number } | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateResult, setGenerateResult] = useState<{ created: number; unfilled: number } | null>(null);
 
   const weekStart = useMemo(
     () => computeWeekStart(new Date(), firstDayOfWeek, weekOffset),
@@ -183,6 +187,7 @@ export default function DraftPageClient() {
     setLoading(true);
     setError(null);
     setPublishResult(null);
+    setGenerateResult(null);
     fetchDrafts(weekStart)
       .then((data) => { if (!cancelled) setDrafts(data); })
       .catch((e) => {
@@ -234,6 +239,31 @@ export default function DraftPageClient() {
   );
   const empById = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
 
+  // Per-employee week totals vs their desired-hours target. Employees appear
+  // when they have draft shifts or a target set, so under-scheduled people
+  // with a preference are visible too.
+  const weeklyHoursRows = useMemo((): WeeklyHoursRow[] => {
+    const byId = new Map(summarizeWeeklyHours(drafts, dates).map((s) => [s.employeeId, s]));
+    const rows: WeeklyHoursRow[] = [];
+    for (const emp of employees) {
+      const s = byId.get(emp.id);
+      const desiredMinutes = emp.desired_hours != null ? emp.desired_hours * 60 : null;
+      if (!s && desiredMinutes === null) continue;
+      const totalMinutes = s?.totalMinutes ?? 0;
+      rows.push({
+        employeeId: emp.id,
+        employeeName: formatDisplayName(emp.name),
+        totalMinutes,
+        totalHours: Math.round((totalMinutes / 60) * 10) / 10,
+        overtimeMinutes: s?.overtimeMinutes ?? 0,
+        isOvertime: s?.isOvertime ?? false,
+        desiredMinutes,
+      });
+    }
+    rows.sort((a, b) => b.totalMinutes - a.totalMinutes || a.employeeId - b.employeeId);
+    return rows;
+  }, [drafts, dates, employees]);
+
   // ---- Mutations ----
   async function handleSaveShift(employeeId: number, draftId: number | null, startMinutes: number, endMinutes: number, override = false) {
     const res = await apiFetch("/api/drafts", {
@@ -273,6 +303,52 @@ export default function DraftPageClient() {
       else next[date] = profileId;
       return next;
     });
+    // The server re-runs generation for auto-managed weeks when the curve
+    // changes — pull the refreshed drafts so the editor tracks it live.
+    fetchDrafts(weekStart).then(setDrafts).catch(() => {});
+  }
+
+  /** Auto-fill the week from the coverage curves. Keeps manual drafts. */
+  async function handleAutoFill() {
+    setGenerating(true);
+    setError(null);
+    setPublishResult(null);
+    setGenerateResult(null);
+    try {
+      const res = await apiFetch("/api/drafts/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekStart }),
+      });
+      if (!res.ok) await throwApiError(res, "Failed to auto-fill schedule");
+      const result = await res.json();
+      setGenerateResult({ created: result.created ?? 0, unfilled: result.unfilled?.length ?? 0 });
+      setDrafts(await fetchDrafts(weekStart));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to auto-fill schedule");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  /** Remove the week's auto drafts — the week stops being auto-managed. */
+  async function handleClearAutoFill() {
+    setGenerating(true);
+    setError(null);
+    setGenerateResult(null);
+    try {
+      const res = await apiFetch("/api/drafts/generate", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekStart }),
+      });
+      if (!res.ok) await throwApiError(res, "Failed to clear auto-filled shifts");
+      setDrafts(await fetchDrafts(weekStart));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to clear auto-filled shifts");
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function handlePublish() {
@@ -395,6 +471,24 @@ export default function DraftPageClient() {
           </div>
         )}
         <AnimatePresence>
+          {generateResult && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              role="status"
+              className={`mx-4 mt-3 px-4 py-3 rounded-xl text-sm text-center [@media(min-width:900px)]:mx-6 ${
+                generateResult.unfilled > 0
+                  ? "bg-amber-500/10 border border-amber-500/25 text-amber-400"
+                  : "bg-violet-500/10 border border-violet-500/25 text-violet-300"
+              }`}
+            >
+              Auto-filled {generateResult.created} shift{generateResult.created === 1 ? "" : "s"}
+              {generateResult.unfilled > 0 && ` · ${generateResult.unfilled} range${generateResult.unfilled === 1 ? "" : "s"} still uncovered`}
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
           {publishResult && (
             <motion.div
               initial={{ opacity: 0, y: -6 }}
@@ -462,6 +556,30 @@ export default function DraftPageClient() {
           <div className="[@media(min-width:900px)]:sticky [@media(min-width:900px)]:top-4">
             <div className="text-[11px] text-slate-400 font-semibold tracking-wider uppercase mb-2 px-1">
               Schedule At a Glance
+            </div>
+
+            {/* Auto-fill from coverage curves */}
+            <div className="mb-3">
+              <motion.button
+                onClick={handleAutoFill}
+                disabled={isLoading || generating || migrationRequired}
+                aria-busy={generating}
+                whileTap={{ scale: 0.98 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                className="w-full px-4 py-3 rounded-xl bg-violet-600/15 border border-violet-500/30 text-violet-300 font-bold text-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-violet-600/25 transition-colors flex items-center justify-center gap-2"
+              >
+                <span aria-hidden="true">✨</span>
+                {generating ? "Working…" : "Auto-fill week from coverage"}
+              </motion.button>
+              {!isLoading && drafts.some((d) => d.source === "auto") && (
+                <button
+                  onClick={handleClearAutoFill}
+                  disabled={generating}
+                  className="w-full mt-1.5 py-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-300 bg-transparent border-none cursor-pointer disabled:opacity-40 transition-colors"
+                >
+                  Clear auto-filled shifts — stop updating this week automatically
+                </button>
+              )}
             </div>
 
             {/* Day chips */}
@@ -572,8 +690,14 @@ export default function DraftPageClient() {
                             {fmtMinutes(d.startMinutes)} – {fmtMinutes(d.endMinutes)} · {Math.round(shiftHours(d) * 10) / 10} hrs
                           </div>
                         </div>
-                        <span className="text-[10px] font-bold uppercase text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-full px-2 py-0.5 shrink-0">
-                          Draft
+                        <span
+                          className={`text-[10px] font-bold uppercase rounded-full px-2 py-0.5 shrink-0 ${
+                            d.source === "auto"
+                              ? "text-violet-300 bg-violet-500/10 border border-violet-500/25"
+                              : "text-amber-400/90 bg-amber-500/10 border border-amber-500/20"
+                          }`}
+                        >
+                          {d.source === "auto" ? "Auto" : "Draft"}
                         </span>
                       </button>
                     );
@@ -597,6 +721,13 @@ export default function DraftPageClient() {
                 </>
               )}
             </div>
+
+            {/* Week totals vs desired-hours targets */}
+            {!isLoading && weeklyHoursRows.length > 0 && (
+              <div className="mb-4">
+                <WeeklyHoursSummary employees={weeklyHoursRows} />
+              </div>
+            )}
           </div>
         </div>
 

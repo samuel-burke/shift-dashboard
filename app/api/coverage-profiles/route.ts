@@ -5,6 +5,17 @@ import { getOrgContext } from "@/lib/org-context";
 import { withOrg } from "@/lib/org-scope";
 import { writeAuditLog } from "@/lib/audit";
 import { validateBlocks, CoverageBlock } from "@/lib/coverage";
+import { resyncAutoDraftsAsService } from "@/lib/auto-schedule-server";
+
+// Editing or deleting a profile changes the target curves — regenerate every
+// affected auto-managed draft week. Never fails the write.
+async function resync(orgId: string) {
+  try {
+    await resyncAutoDraftsAsService(orgId);
+  } catch (e) {
+    console.error("[api/coverage-profiles] auto-schedule resync failed", e);
+  }
+}
 
 export const dynamic = "force-dynamic";
 
@@ -167,6 +178,8 @@ export async function PUT(request: Request) {
     }
   }
 
+  if (blocks !== undefined) await resync(orgId!);
+
   writeAuditLog({
     action:       "coverage_profile.update",
     orgId:        orgId!,
@@ -208,6 +221,8 @@ export async function DELETE(request: Request) {
     console.error("[api/coverage-profiles]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
+
+  await resync(orgId!);
 
   writeAuditLog({
     action:       "coverage_profile.delete",

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase-server";
 import { requireManager } from "@/lib/require-manager";
 import { notify } from "@/lib/notify";
 import { writeAuditLog } from "@/lib/audit";
+import { resyncAutoDraftsAsService } from "@/lib/auto-schedule-server";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,20 @@ export async function PUT(
   if (error) {
     console.error("[api/time-off/[id]]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+
+  // The decision changes who can work that day — re-run generation for any
+  // auto-managed draft week containing it. Never fails the approval.
+  if (pto?.date) {
+    const ptoDate = typeof pto.date === "string" ? pto.date.slice(0, 10) : String(pto.date);
+    try {
+      await resyncAutoDraftsAsService(orgId!, {
+        dates: [ptoDate],
+        notifyReason: status === "approved" ? "A time-off approval" : "A time-off decision",
+      });
+    } catch (e) {
+      console.error("[api/time-off/[id]] auto-schedule resync failed", e);
+    }
   }
 
   // Notify the employee of the decision

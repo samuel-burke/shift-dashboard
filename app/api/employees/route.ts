@@ -6,6 +6,7 @@ import { getOrgContext } from "@/lib/org-context";
 import { isDemoOrgId } from "@/lib/demo-org";
 import { writeAuditLog } from "@/lib/audit";
 import { isJobCode } from "@/lib/work-preference";
+import { resyncAutoDraftsAsService } from "@/lib/auto-schedule-server";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +35,7 @@ export async function GET(request: Request) {
 
   const { data, error: dbError } = await supabase
     .from("employees")
-    .select("id, name, email, user_id, pay_rate, job_code")
+    .select("id, name, email, user_id, pay_rate, job_code, desired_hours")
     .eq("org_id", ctx!.orgId);
   if (dbError) {
     console.error("[api/employees]", dbError);
@@ -44,7 +45,7 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const { id, userId, name, payRate, jobCode } = await request.json();
+  const { id, userId, name, payRate, jobCode, desiredHours } = await request.json();
 
   if (id == null)
     return NextResponse.json({ error: "id required" }, { status: 400 });
@@ -71,14 +72,38 @@ export async function PATCH(request: Request) {
       { error: "jobCode must be 'full_time' or 'part_time'" },
       { status: 400 }
     );
+  if (
+    desiredHours !== undefined &&
+    desiredHours !== null &&
+    (!Number.isInteger(desiredHours) || desiredHours < 0 || desiredHours > 80)
+  )
+    return NextResponse.json(
+      { error: "desiredHours must be an integer between 0 and 80, or null to clear" },
+      { status: 400 }
+    );
 
   const supabase = await createClient();
-  const { user, orgId, error: authError } = await requireManager(supabase, request);
-  if (authError)
+  const { ctx, error: ctxError } = await getOrgContext(supabase, request);
+  if (ctxError)
     return NextResponse.json(
-      { error: authError },
-      { status: authError === "Not authenticated" ? 401 : 403 }
+      { error: ctxError },
+      { status: ctxError === "Not authenticated" ? 401 : 403 }
     );
+
+  const { user, orgId, isManager, employeeId: ctxEmployeeId } = ctx!;
+
+  // Non-managers may only set their own desired weekly hours — a scheduling
+  // preference, like availability. Everything else stays manager-only.
+  if (!isManager) {
+    const onlyDesiredHours =
+      userId === undefined &&
+      name === undefined &&
+      payRate === undefined &&
+      jobCode === undefined &&
+      desiredHours !== undefined;
+    if (!onlyDesiredHours || !ctxEmployeeId || ctxEmployeeId !== id)
+      return NextResponse.json({ error: "Manager access required" }, { status: 403 });
+  }
 
   // Demo org: visitors may rename employees or unlink/claim a row for
   // themselves, but must not attach arbitrary real user ids to demo rows.
@@ -104,11 +129,18 @@ export async function PATCH(request: Request) {
   if (name !== undefined) updates.name = name.trim();
   if (payRate !== undefined) updates.pay_rate = payRate;
   if (jobCode !== undefined) updates.job_code = jobCode;
+  if (desiredHours !== undefined) updates.desired_hours = desiredHours;
 
   if (Object.keys(updates).length === 0)
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
 
-  const { error } = await supabase
+  // The employees table is manager-writable under RLS, so the self-service
+  // desired-hours path must write with the service role — the caller's client
+  // would silently update zero rows. The gate above has already pinned the
+  // update to the caller's own row and to that single field, and both filters
+  // stay explicit (see lib/org-scope.ts on admin-client scoping).
+  const writer = isManager ? supabase : createAdminClient();
+  const { error } = await writer
     .from("employees")
     .update(updates)
     .eq("org_id", orgId!)
@@ -117,6 +149,16 @@ export async function PATCH(request: Request) {
   if (error) {
     console.error("[api/employees]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+
+  // Desired hours steer the auto-scheduler — re-run generation for the
+  // auto-managed draft weeks. Never fails the update.
+  if (desiredHours !== undefined) {
+    try {
+      await resyncAutoDraftsAsService(orgId!, { notifyReason: "A desired-hours change" });
+    } catch (e) {
+      console.error("[api/employees] auto-schedule resync failed", e);
+    }
   }
 
   writeAuditLog({

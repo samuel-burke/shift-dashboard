@@ -65,6 +65,7 @@ export async function seedDemoOrg(admin: SupabaseClient): Promise<DemoSeedResult
     name: e.name,
     email: e.id === 1 ? DEMO_MANAGER_EMAIL : (e.email ?? null),
     user_id: null,
+    desired_hours: e.desired_hours ?? null,
   }));
   const { data: insertedEmployees, error: empError } = await admin
     .from("employees")
@@ -290,7 +291,10 @@ export async function seedDemoOrg(admin: SupabaseClient): Promise<DemoSeedResult
     if (error) throw new Error(`[demo-seed] shift_swaps insert failed: ${error.message}`);
   }
 
-  // 10. Draft schedules for the week beyond the published horizon.
+  // 10. Draft schedules for the week beyond the published horizon. Seeded as
+  //     'auto' so the week is auto-managed: demo visitors who approve time
+  //     off, file a call-out, or tweak a coverage curve see the drafts
+  //     regenerate on the fly.
   const draftRows: Array<Record<string, unknown>> = [];
   for (let offset = FUTURE_DAYS + 1; offset <= FUTURE_DAYS + DRAFT_DAYS; offset++) {
     const date = plusDays(offset);
@@ -304,6 +308,7 @@ export async function seedDemoOrg(admin: SupabaseClient): Promise<DemoSeedResult
         date,
         start_minutes: shift[0],
         end_minutes: shift[1],
+        source: "auto",
       });
     }
   }

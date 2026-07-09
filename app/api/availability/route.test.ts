@@ -5,6 +5,7 @@ import { makeSupabaseClient, MOCK_USER } from "../__tests__/helpers";
 
 vi.mock("@/lib/supabase-server", () => ({ createClient: vi.fn() }));
 vi.mock("next/server", () => ({
+  after: (fn: () => unknown) => { void fn(); },
   NextResponse: {
     json: (data: any, init?: { status?: number }) =>
       new Response(JSON.stringify(data), {

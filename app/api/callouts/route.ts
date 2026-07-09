@@ -4,6 +4,7 @@ import { getOrgContext } from "@/lib/org-context";
 import { withOrg } from "@/lib/org-scope";
 import { notifyManagers } from "@/lib/notify";
 import { writeAuditLog } from "@/lib/audit";
+import { resyncAutoDraftsAsService } from "@/lib/auto-schedule-server";
 
 export const dynamic = "force-dynamic";
 
@@ -173,6 +174,14 @@ export async function POST(request: Request) {
   if (upsertError) {
     console.error("[api/callouts]", upsertError);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+
+  // The employee is out that day — re-run generation for any auto-managed
+  // draft week containing it. Never fails the call-out.
+  try {
+    await resyncAutoDraftsAsService(orgId, { dates: [date], notifyReason: "A call-out" });
+  } catch (e) {
+    console.error("[api/callouts] auto-schedule resync failed", e);
   }
 
   // Let the managers know right away (in-app + push, pref-gated).

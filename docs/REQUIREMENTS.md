@@ -124,6 +124,27 @@ ShiftView is a mobile-first shift scheduling dashboard for retail and hospitalit
 
 ---
 
+### FR-9 Automatic Schedule Generation
+
+| ID | Requirement | Actor |
+|---|---|---|
+| FR-9.1 | A manager shall be able to auto-fill a week's draft schedule from that week's target coverage curves with a single action. | Manager |
+| FR-9.2 | Generated shifts shall respect employee availability windows, approved time off, and call-outs. | System |
+| FR-9.3 | The generator shall never schedule an employee past the weekly hours cap (default 40 h), counting manual drafts and published shifts toward the total. | System |
+| FR-9.4 | The generator shall enforce a minimum rest period between shifts on consecutive days (default 10 h; 0 disables). | System |
+| FR-9.5 | An employee's desired weekly hours shall act as a soft target: employees furthest below their target are scheduled first, and generated shifts are not extended past it. | System |
+| FR-9.6 | Generated shifts shall be between the configured minimum and maximum length (defaults 4 h / 8 h) and aligned to 15-minute slots. | System |
+| FR-9.7 | Shift-length, rest, and weekly-cap limits shall be configurable per organization in Settings. | Manager |
+| FR-9.8 | A week containing auto-generated drafts is *auto-managed*: changes to coverage curves, availability, time-off decisions, call-outs, desired hours, or the scheduling policy shall regenerate its auto drafts automatically. | System |
+| FR-9.9 | Manager-placed (or manager-edited) draft shifts shall never be modified by the generator; it schedules around them. | System |
+| FR-9.10 | Managers shall be notified when a background regeneration changes drafts, including any remaining coverage gaps. | System |
+| FR-9.11 | Coverage that cannot be filled within the constraints shall be reported as understaffed ranges, not silently dropped. | System |
+| FR-9.12 | A manager shall be able to remove a week's auto drafts in one action, taking the week out of auto-management. | Manager |
+| FR-9.13 | Every background regeneration that changes drafts shall be recorded in the audit log. | System |
+| FR-9.14 | An employee shall be able to set their own desired weekly hours; all other employee fields remain manager-only. | Authenticated User |
+
+---
+
 ## Business Rules
 
 | Rule | Description |
