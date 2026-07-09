@@ -9,6 +9,8 @@ import { motion } from "framer-motion";
 import BottomNav from "../../components/BottomNav";
 import AppShell from "../../components/AppShell";
 import PunctualityReport, { type PunctualityRow } from "../../components/PunctualityReport";
+import WeeklyHoursSummary, { type WeeklyHoursRow } from "../../components/WeeklyHoursSummary";
+import LaborCostSummary, { type LaborCostRow } from "../../components/LaborCostSummary";
 import { CoverageProfile, curveForDate } from "../../lib/coverage";
 import type { PunctualitySummary } from "../../lib/punctuality";
 
@@ -307,6 +309,13 @@ export default function ReportsPageClient() {
   const [weekSchedules, setWeekSchedules] = useState<Schedule[]>([]);
   const [weekLoading, setWeekLoading] = useState(false);
 
+  // Scheduled-hours (overtime) + labor-cost summaries for the selected week.
+  const [weeklyHours, setWeeklyHours] = useState<WeeklyHoursRow[]>([]);
+  const [hoursThreshold, setHoursThreshold] = useState(2400);
+  const [laborCost, setLaborCost] = useState<LaborCostRow[]>([]);
+  const [laborTotalCost, setLaborTotalCost] = useState(0);
+  const [laborMissingRate, setLaborMissingRate] = useState(0);
+
   // ── Activity log state ──
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -504,6 +513,32 @@ export default function ReportsPageClient() {
       setWeekSchedules(all);
       setWeekLoading(false);
     });
+  }, [selectedWeekStart]);
+
+  // Scheduled-hours (overtime) + labor-cost summaries for the selected week.
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch(`/api/reports/scheduled-hours?weekStart=${selectedWeekStart}`)
+      .then((r) => r.json())
+      .then(({ employees, thresholdMinutes }) => {
+        if (cancelled) return;
+        setWeeklyHours(employees ?? []);
+        if (thresholdMinutes != null) setHoursThreshold(thresholdMinutes);
+      })
+      .catch(() => {});
+
+    fetch(`/api/reports/labor-cost?weekStart=${selectedWeekStart}`)
+      .then((r) => r.json())
+      .then(({ employees, totalCost, employeesMissingRate }) => {
+        if (cancelled) return;
+        setLaborCost(employees ?? []);
+        setLaborTotalCost(totalCost ?? 0);
+        setLaborMissingRate(employeesMissingRate ?? 0);
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
   }, [selectedWeekStart]);
 
   // Load audit log whenever tab opens or committed filters change
@@ -790,6 +825,20 @@ export default function ReportsPageClient() {
                 )}
               </div>
             )}
+          </section>
+
+          {/* Scheduled hours + overtime warnings for the selected week */}
+          <section>
+            <WeeklyHoursSummary employees={weeklyHours} thresholdMinutes={hoursThreshold} />
+          </section>
+
+          {/* Scheduled labor cost for the selected week */}
+          <section>
+            <LaborCostSummary
+              employees={laborCost}
+              totalCost={laborTotalCost}
+              employeesMissingRate={laborMissingRate}
+            />
           </section>
 
           {/* CSV Export */}
