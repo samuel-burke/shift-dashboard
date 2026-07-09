@@ -1,10 +1,13 @@
 export type ShiftType = "opener" | "mid" | "closer";
 
+export type JobCode = "full_time" | "part_time";
+
 export type Employee = {
   id: number;
   name: string;
   email?: string;
   user_id?: string | null;
+  job_code?: JobCode;
 };
 
 export function formatDisplayName(name: string): string {

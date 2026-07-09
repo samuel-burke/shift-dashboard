@@ -5,6 +5,7 @@ import { requireManager } from "@/lib/require-manager";
 import { getOrgContext } from "@/lib/org-context";
 import { isDemoOrgId } from "@/lib/demo-org";
 import { writeAuditLog } from "@/lib/audit";
+import { isJobCode } from "@/lib/work-preference";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +34,7 @@ export async function GET(request: Request) {
 
   const { data, error: dbError } = await supabase
     .from("employees")
-    .select("id, name, email, user_id, pay_rate")
+    .select("id, name, email, user_id, pay_rate, job_code")
     .eq("org_id", ctx!.orgId);
   if (dbError) {
     console.error("[api/employees]", dbError);
@@ -43,7 +44,7 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const { id, userId, name, payRate } = await request.json();
+  const { id, userId, name, payRate, jobCode } = await request.json();
 
   if (id == null)
     return NextResponse.json({ error: "id required" }, { status: 400 });
@@ -63,6 +64,11 @@ export async function PATCH(request: Request) {
   )
     return NextResponse.json(
       { error: "payRate must be a non-negative number or null to clear" },
+      { status: 400 }
+    );
+  if (jobCode !== undefined && !isJobCode(jobCode))
+    return NextResponse.json(
+      { error: "jobCode must be 'full_time' or 'part_time'" },
       { status: 400 }
     );
 
@@ -97,6 +103,7 @@ export async function PATCH(request: Request) {
   if (userId !== undefined) updates.user_id = userId;
   if (name !== undefined) updates.name = name.trim();
   if (payRate !== undefined) updates.pay_rate = payRate;
+  if (jobCode !== undefined) updates.job_code = jobCode;
 
   if (Object.keys(updates).length === 0)
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });

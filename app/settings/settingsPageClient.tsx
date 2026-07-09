@@ -10,12 +10,14 @@ import InviteSheet from "../../components/InviteSheet";
 import StoreHoursSection from "../../components/StoreHoursSection";
 import { getMonogram, fmtMinutes, AvailabilityRecord } from "../../data/types";
 import AvailabilitySection from "../../components/AvailabilitySection";
+import WorkHoursSection from "../../components/WorkHoursSection";
 import GeofenceMap from "../../components/GeofenceMap";
 import { SkeletonSettingsBody } from "../../components/Skeleton";
 import { useTheme, type ThemeMode } from "../../components/ThemeProvider";
 import { useAppData } from "../../lib/AppDataContext";
 import { isSoundEnabled, setSoundEnabled as persistSoundEnabled } from "../../lib/sound-preference";
 import { DEFAULT_PUNCH_POLICY, type PunchPolicy } from "../../lib/punch-policy";
+import { formatJobCode, JOB_CODES, type JobCode } from "../../lib/work-preference";
 
 type NominatimAddress = {
   house_number?: string; road?: string;
@@ -57,7 +59,7 @@ const FIRST_DAY_OPTIONS = [
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
-type Employee = { id: number; name: string; email: string | null; user_id: string | null };
+type Employee = { id: number; name: string; email: string | null; user_id: string | null; job_code?: JobCode };
 
 function SaveStatusText({ status, testId }: { status: SaveStatus; testId: string }) {
   return (
@@ -704,6 +706,18 @@ export default function SettingsPageClient({
     }
   }
 
+  // Optimistically flip an employee's job code; roll back if the PATCH fails.
+  async function saveJobCode(id: number, jobCode: JobCode) {
+    const previous = employees;
+    setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, job_code: jobCode } : e)));
+    const res = await fetch("/api/employees", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, jobCode }),
+    }).catch(() => null);
+    if (!res?.ok) setEmployees(previous);
+  }
+
   async function deleteEmployee(id: number) {
     setConfirmDeleteEmployee(null);
     setDeletingId(id);
@@ -808,6 +822,9 @@ export default function SettingsPageClient({
             firstDayOfWeek={firstDayOfWeek}
           />
         )}
+
+        {/* My Work Hours — weekly-hours preference (full-time is fixed at 40) */}
+        {employeeId !== null && <WorkHoursSection employeeId={employeeId} />}
 
         {/* Appearance — all users */}
         <section>
@@ -1497,6 +1514,37 @@ export default function SettingsPageClient({
                           </button>
                         )}
                       </div>
+                    )}
+                  </div>
+                  {/* Job code — full-time is always 40 hrs/week; part-time
+                      associates pick their own target in their settings. */}
+                  <div className="flex items-center gap-2 px-4 pb-3">
+                    <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
+                      Job code
+                    </span>
+                    <div
+                      className="flex bg-slate-800 rounded-lg p-[2px] ml-auto"
+                      role="group"
+                      aria-label={`Job code for ${emp.name}`}
+                    >
+                      {JOB_CODES.map((code) => {
+                        const isActive = (emp.job_code ?? "part_time") === code;
+                        return (
+                          <button
+                            key={code}
+                            onClick={() => { if (!isActive) saveJobCode(emp.id, code); }}
+                            aria-pressed={isActive}
+                            className={`px-3 py-1.5 rounded-[6px] text-[11px] font-semibold cursor-pointer transition-colors ${
+                              isActive ? "bg-slate-600 text-slate-50" : "text-slate-500 hover:text-slate-300"
+                            }`}
+                          >
+                            {formatJobCode(code)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {(emp.job_code ?? "part_time") === "full_time" && (
+                      <span className="text-[11px] text-slate-500">40 hrs/wk</span>
                     )}
                   </div>
                   {isManager && (

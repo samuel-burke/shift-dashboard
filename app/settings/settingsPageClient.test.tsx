@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent, within } from "@testing-library/react";
 import SettingsPageClient from "./settingsPageClient";
 
 vi.mock("next/navigation", () => ({
@@ -26,7 +26,7 @@ const DEFAULT_SETTINGS = {
   gpsRequired: false,
 };
 
-function setupFetch({ putOk = true } = {}) {
+function setupFetch({ putOk = true, employees = [] as unknown[] } = {}) {
   return vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
     const url = input.toString();
     const method = (init?.method ?? "GET").toUpperCase();
@@ -37,7 +37,7 @@ function setupFetch({ putOk = true } = {}) {
       if (url.includes("/api/settings"))
         return { ok: true, json: async () => DEFAULT_SETTINGS } as Response;
       if (url.includes("/api/employees"))
-        return { ok: true, json: async () => [] } as Response;
+        return { ok: true, json: async () => employees } as Response;
       if (url.includes("/api/me"))
         return { ok: true, json: async () => ({ isManager: true, employeeId: null }) } as Response;
       if (url.includes("/api/availability"))
@@ -424,6 +424,51 @@ describe("EmployeeAvailabilityRow in SettingsPageClient", () => {
   });
 });
 
+// ── Job code (manager) ────────────────────────────────────────────────────────
+
+describe("SettingsPageClient — job code", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+  afterEach(() => vi.restoreAllMocks());
+
+  const JANE = { id: 7, name: "Jane Smith", email: null, user_id: null, job_code: "part_time" };
+
+  it("shows the employee's current job code as active", async () => {
+    setupFetch({ employees: [JANE] });
+    await renderAndSettle();
+    const group = screen.getByRole("group", { name: /job code for jane smith/i });
+    expect(within(group).getByRole("button", { name: "Part-time" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(group).getByRole("button", { name: "Full-time" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("PATCHes /api/employees with the new job code on toggle", async () => {
+    const fetchSpy = setupFetch({ employees: [JANE] });
+    await renderAndSettle();
+    const group = screen.getByRole("group", { name: /job code for jane smith/i });
+    await act(async () => {
+      fireEvent.click(within(group).getByRole("button", { name: "Full-time" }));
+    });
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith("/api/employees", expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ id: 7, jobCode: "full_time" }),
+      }));
+    });
+    expect(within(group).getByRole("button", { name: "Full-time" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("rolls the toggle back when the PATCH fails", async () => {
+    setupFetch({ employees: [JANE], putOk: false });
+    await renderAndSettle();
+    const group = screen.getByRole("group", { name: /job code for jane smith/i });
+    await act(async () => {
+      fireEvent.click(within(group).getByRole("button", { name: "Full-time" }));
+    });
+    await waitFor(() => {
+      expect(within(group).getByRole("button", { name: "Part-time" })).toHaveAttribute("aria-pressed", "true");
+    });
+  });
+});
+
 // ── Employee (non-manager) view ───────────────────────────────────────────────
 
 describe("SettingsPageClient — employee view", () => {
@@ -452,6 +497,12 @@ describe("SettingsPageClient — employee view", () => {
     render(<SettingsPageClient />);
     await screen.findByTestId("availability-section");
     expect(screen.getByText("Availability")).toBeInTheDocument();
+  });
+
+  it("shows the work-hours section for a linked employee", async () => {
+    render(<SettingsPageClient />);
+    await screen.findByTestId("work-hours-section");
+    expect(screen.getByText("Work Hours")).toBeInTheDocument();
   });
 
   it("hides Store Hours from employees", async () => {
