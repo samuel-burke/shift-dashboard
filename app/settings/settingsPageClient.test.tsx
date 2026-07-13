@@ -449,10 +449,10 @@ describe("EmployeePreferencesRow in SettingsPageClient", () => {
     });
 
     const patchCall = fetchSpy.mock.calls.find(
-      ([url, opts]) => url === "/api/employees" && opts?.method === "PATCH"
+      ([url, opts]) => url === "/api/schedule-preferences" && opts?.method === "PATCH"
     );
     expect(patchCall).toBeTruthy();
-    expect(JSON.parse(patchCall![1]!.body as string)).toEqual({ id: 5, idealHours: 25 });
+    expect(JSON.parse(patchCall![1]!.body as string)).toEqual({ employeeId: 5, idealHours: 25 });
     await waitFor(() => expect(row.getByText("Saved ✓")).toBeInTheDocument());
     vi.useRealTimers();
   });
@@ -470,7 +470,7 @@ describe("EmployeePreferencesRow in SettingsPageClient", () => {
     });
 
     const patchCall = fetchSpy.mock.calls.find(
-      ([url, opts]) => url === "/api/employees" && opts?.method === "PATCH"
+      ([url, opts]) => url === "/api/schedule-preferences" && opts?.method === "PATCH"
     );
     expect(patchCall).toBeFalsy();
     await waitFor(() =>
@@ -495,7 +495,7 @@ describe("SettingsPageClient — employee view", () => {
         if (url.includes("/api/settings"))
           return { ok: true, json: async () => DEFAULT_SETTINGS } as Response;
         if (url.includes("/api/employees"))
-          return { ok: true, json: async () => [] } as Response;
+          return { ok: true, json: async () => [{ id: 5, name: "Alice Smith", email: null, user_id: "user-1", ideal_hours: 20 }] } as Response;
       }
       return { ok: true, json: async () => ({}) } as Response;
     });
@@ -532,5 +532,34 @@ describe("SettingsPageClient — employee view", () => {
     render(<SettingsPageClient />);
     await screen.findByTestId("availability-section");
     expect(screen.getByRole("button", { name: /sign out/i })).toBeInTheDocument();
+  });
+
+  it("shows an editable ideal weekly hours input pre-filled with the saved value", async () => {
+    render(<SettingsPageClient />);
+    await screen.findByTestId("my-ideal-hours");
+    const input = screen.getByLabelText("My ideal weekly hours") as HTMLInputElement;
+    expect(input.value).toBe("20");
+  });
+
+  it("saving own ideal hours PATCHes /api/schedule-preferences", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetchSpy = vi.mocked(global.fetch);
+    render(<SettingsPageClient />);
+    await screen.findByTestId("my-ideal-hours");
+
+    const input = screen.getByLabelText("My ideal weekly hours");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "30" } });
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const patchCall = fetchSpy.mock.calls.find(
+      ([url, opts]) => url === "/api/schedule-preferences" && (opts as RequestInit | undefined)?.method === "PATCH"
+    );
+    expect(patchCall).toBeTruthy();
+    expect(JSON.parse((patchCall![1] as RequestInit).body as string)).toEqual({ employeeId: 5, idealHours: 30 });
+    vi.useRealTimers();
   });
 });

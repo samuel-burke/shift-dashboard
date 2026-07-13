@@ -10,6 +10,7 @@ import InviteSheet from "../../components/InviteSheet";
 import StoreHoursSection from "../../components/StoreHoursSection";
 import { getMonogram } from "../../data/types";
 import AvailabilitySection from "../../components/AvailabilitySection";
+import IdealHoursEditor from "../../components/IdealHoursEditor";
 import GeofenceMap from "../../components/GeofenceMap";
 import { SkeletonSettingsBody } from "../../components/Skeleton";
 import { useTheme, type ThemeMode } from "../../components/ThemeProvider";
@@ -101,44 +102,6 @@ function EmployeePreferencesRow({
   onIdealHoursSaved: (id: number, idealHours: number | null) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [idealVal, setIdealVal] = useState(
-    employee.ideal_hours != null ? String(employee.ideal_hours) : ""
-  );
-  const [idealStatus, setIdealStatus] = useState<SaveStatus>("idle");
-  const [idealError, setIdealError] = useState<string | null>(null);
-  const idealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  function scheduleIdealSave(raw: string) {
-    setIdealVal(raw);
-    setIdealStatus("saving");
-    setIdealError(null);
-    if (idealTimerRef.current) clearTimeout(idealTimerRef.current);
-    idealTimerRef.current = setTimeout(() => saveIdealHours(raw), 800);
-  }
-
-  async function saveIdealHours(raw: string) {
-    const trimmed = raw.trim();
-    const value = trimmed === "" ? null : Number(trimmed);
-    if (value !== null && (!Number.isInteger(value) || value < 0 || value > 168)) {
-      setIdealStatus("error");
-      setIdealError("Enter a whole number of hours between 0 and 168");
-      return;
-    }
-    const res = await fetch("/api/employees", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: employee.id, idealHours: value }),
-    }).catch(() => null);
-    if (res?.ok) {
-      setIdealStatus("saved");
-      onIdealHoursSaved(employee.id, value);
-      setTimeout(() => setIdealStatus("idle"), 2000);
-    } else {
-      setIdealStatus("error");
-      const json = await res?.json().catch(() => ({}));
-      setIdealError(json?.error ?? "Failed to save");
-    }
-  }
 
   const summary =
     employee.ideal_hours != null ? ` · ${employee.ideal_hours} hrs/week` : "";
@@ -162,26 +125,12 @@ function EmployeePreferencesRow({
               Ideal Weekly Hours
             </div>
             <div className="bg-card rounded-2xl border border-slate-800/60 px-4 py-3">
-              <div className="flex items-center gap-3">
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  max={168}
-                  step={1}
-                  placeholder="Not set"
-                  aria-label={`Ideal weekly hours for ${employee.name}`}
-                  value={idealVal}
-                  onChange={(e) => scheduleIdealSave(e.target.value)}
-                  className="w-24 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500/70 transition-colors"
-                />
-                <span className="text-xs text-slate-500">hours per week</span>
-                <div aria-live="polite" className="ml-auto text-xs">
-                  {idealStatus === "saving" && <span className="text-slate-400">Saving…</span>}
-                  {idealStatus === "saved"  && <span className="text-emerald-400">Saved ✓</span>}
-                  {idealStatus === "error"  && <span role="alert" className="text-red-400">{idealError ?? "Failed to save"}</span>}
-                </div>
-              </div>
+              <IdealHoursEditor
+                employeeId={employee.id}
+                initialValue={employee.ideal_hours ?? null}
+                ariaLabel={`Ideal weekly hours for ${employee.name}`}
+                onSaved={(idealHours) => onIdealHoursSaved(employee.id, idealHours)}
+              />
             </div>
           </div>
 
@@ -805,14 +754,27 @@ export default function SettingsPageClient({
             firstDayOfWeek={firstDayOfWeek}
           />
         )}
+        {/* My ideal weekly hours — editable by the employee; managers use it
+            when building the schedule. Rendered once the employees list has
+            loaded so the editor starts from the saved value. */}
         {employeeId !== null && (() => {
           const mine = employees.find((e) => e.id === employeeId);
-          return mine?.ideal_hours != null ? (
-            <div data-testid="my-ideal-hours" className="text-xs text-slate-500 px-1 -mt-3">
-              Ideal weekly hours:{" "}
-              <span className="text-slate-300 font-semibold">{mine.ideal_hours}</span>
-              {" "}— managers use this when building the schedule.
-            </div>
+          return mine ? (
+            <section data-testid="my-ideal-hours">
+              <div className="text-[11px] text-slate-400 font-semibold tracking-wider uppercase mb-2 px-1">
+                Ideal Weekly Hours
+              </div>
+              <div className="bg-card rounded-2xl border border-slate-800/60 px-4 py-3">
+                <IdealHoursEditor
+                  employeeId={mine.id}
+                  initialValue={mine.ideal_hours ?? null}
+                  ariaLabel="My ideal weekly hours"
+                />
+                <div className="text-[11px] text-slate-500 mt-2">
+                  Managers use this as a target when building the schedule.
+                </div>
+              </div>
+            </section>
           ) : null;
         })()}
 

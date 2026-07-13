@@ -141,6 +141,7 @@ function auditTitle(entry: AuditEntry): string {
     case "payroll.export":       return `Exported payroll report`;
     case "availability.upsert":  return `Updated availability for ${empName}`;
     case "availability.delete":  return `Removed availability for ${empName}`;
+    case "ideal_hours.update":   return `Updated ideal hours for ${empName}`;
     case "settings.update":      return `Updated app settings`;
     case "store_hours.update":   return `Updated store hours`;
     case "template.create":      return `Created template "${tplName}"`;
@@ -222,6 +223,12 @@ function auditDetail(entry: AuditEntry): string | null {
     case "availability.upsert":
     case "availability.delete":
       return (m.dayName as string | null) ?? null;
+    case "ideal_hours.update": {
+      const bh = b.idealHours as number | null | undefined;
+      const ah = a.idealHours as number | null | undefined;
+      const fmt = (v: number | null | undefined) => (v == null ? "not set" : `${v} hrs/week`);
+      return `${fmt(bh)} to ${fmt(ah)}`;
+    }
     case "settings.update": {
       const keys = m.changedKeys as string[] | null;
       return keys ? keys.join(", ") : null;
