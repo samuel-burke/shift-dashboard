@@ -8,7 +8,7 @@ const listContainer = { hidden: {}, show: { transition: { staggerChildren: 0.045
 const listItem = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 320, damping: 26 } } };
 import InviteSheet from "../../components/InviteSheet";
 import StoreHoursSection from "../../components/StoreHoursSection";
-import { getMonogram, fmtMinutes, AvailabilityRecord } from "../../data/types";
+import { getMonogram } from "../../data/types";
 import AvailabilitySection from "../../components/AvailabilitySection";
 import GeofenceMap from "../../components/GeofenceMap";
 import { SkeletonSettingsBody } from "../../components/Skeleton";
@@ -34,8 +34,6 @@ function shortAddress(r: NominatimResult): string {
   return [street, city, region].filter(Boolean).join(", ") || r.display_name.split(", ")[0];
 }
 
-const DAY_SHORT  = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
 const TIMEZONE_OPTIONS = [
   { label: "Eastern (ET)",  value: "America/New_York" },
   { label: "Central (CT)",  value: "America/Chicago" },
@@ -57,7 +55,7 @@ const FIRST_DAY_OPTIONS = [
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
-type Employee = { id: number; name: string; email: string | null; user_id: string | null };
+type Employee = { id: number; name: string; email: string | null; user_id: string | null; ideal_hours?: number | null };
 
 function SaveStatusText({ status, testId }: { status: SaveStatus; testId: string }) {
   return (
@@ -88,111 +86,110 @@ const DEFAULT_STORE_HOURS: Record<number, { open: number; close: number }> = {
 
 function clamp(v: number, lo: number, hi: number) { return Math.min(hi, Math.max(lo, v)); }
 
-function EmployeeAvailabilityRow({
-  employeeId,
+// Manager-editable schedule preferences for one employee: ideal weekly hours
+// plus the same per-day availability editor employees use for themselves (the
+// availability API already accepts manager writes to any employee in the org).
+function EmployeePreferencesRow({
+  employee,
   storeHours,
+  firstDayOfWeek,
+  onIdealHoursSaved,
 }: {
-  employeeId: number;
+  employee: Employee;
   storeHours: Record<number, { open: number; close: number }>;
+  firstDayOfWeek: number;
+  onIdealHoursSaved: (id: number, idealHours: number | null) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [records, setRecords] = useState<AvailabilityRecord[] | null>(null);
-  const fetchedRef = useRef(false);
+  const [idealVal, setIdealVal] = useState(
+    employee.ideal_hours != null ? String(employee.ideal_hours) : ""
+  );
+  const [idealStatus, setIdealStatus] = useState<SaveStatus>("idle");
+  const [idealError, setIdealError] = useState<string | null>(null);
+  const idealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function toggle() {
-    setExpanded((prev) => {
-      const next = !prev;
-      if (next && !fetchedRef.current) {
-        fetchedRef.current = true;
-        fetch(`/api/availability?employeeId=${employeeId}`)
-          .then((r) => r.json())
-          .then((data: AvailabilityRecord[]) => setRecords(Array.isArray(data) ? data : []))
-          .catch(() => setRecords([]));
-      }
-      return next;
-    });
+  function scheduleIdealSave(raw: string) {
+    setIdealVal(raw);
+    setIdealStatus("saving");
+    setIdealError(null);
+    if (idealTimerRef.current) clearTimeout(idealTimerRef.current);
+    idealTimerRef.current = setTimeout(() => saveIdealHours(raw), 800);
   }
 
-  const restricted = (records ?? []).filter(
-    (r) => r.startMinutes !== null || r.endMinutes !== null || (r.startMinutes === null && r.endMinutes === null)
-  );
-  const restrictedDows = new Set(restricted.map((r) => r.dayOfWeek));
-  const freeDows = [0, 1, 2, 3, 4, 5, 6].filter((d) => !restrictedDows.has(d));
-  const allFree = records !== null && restricted.length === 0;
+  async function saveIdealHours(raw: string) {
+    const trimmed = raw.trim();
+    const value = trimmed === "" ? null : Number(trimmed);
+    if (value !== null && (!Number.isInteger(value) || value < 0 || value > 168)) {
+      setIdealStatus("error");
+      setIdealError("Enter a whole number of hours between 0 and 168");
+      return;
+    }
+    const res = await fetch("/api/employees", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: employee.id, idealHours: value }),
+    }).catch(() => null);
+    if (res?.ok) {
+      setIdealStatus("saved");
+      onIdealHoursSaved(employee.id, value);
+      setTimeout(() => setIdealStatus("idle"), 2000);
+    } else {
+      setIdealStatus("error");
+      const json = await res?.json().catch(() => ({}));
+      setIdealError(json?.error ?? "Failed to save");
+    }
+  }
+
+  const summary =
+    employee.ideal_hours != null ? ` · ${employee.ideal_hours} hrs/week` : "";
 
   return (
-    <div data-testid={`employee-avail-${employeeId}`} className="px-4 pb-3 pt-0">
+    <div data-testid={`employee-avail-${employee.id}`} className="px-4 pb-3 pt-0">
       <button
-        onClick={toggle}
+        onClick={() => setExpanded((prev) => !prev)}
         aria-expanded={expanded}
-        aria-label="Toggle typical week"
+        aria-label={`Toggle schedule preferences for ${employee.name}`}
         className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-400 cursor-pointer bg-transparent border-none transition-colors py-2 -my-2"
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={`transition-transform ${expanded ? "rotate-90" : ""}`}><path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        <span>Typical Week</span>
+        <span>Schedule Preferences{summary}</span>
       </button>
 
       {expanded && (
-        <div className="mt-2 pl-1">
-          {records === null ? (
-            <div role="status" className="text-xs text-slate-500">Loading…</div>
-          ) : allFree ? (
-            <div className="text-xs text-slate-500">No restrictions set</div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {restricted.map((rec) => {
-                const hours = storeHours[rec.dayOfWeek] ?? DEFAULT_STORE_HOURS[rec.dayOfWeek];
-                const isOff = rec.startMinutes === null || rec.endMinutes === null;
-                return (
-                  <div key={rec.dayOfWeek} className="flex flex-col gap-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-semibold text-slate-400 w-7 shrink-0">
-                        {DAY_SHORT[rec.dayOfWeek]}
-                      </span>
-                      {isOff ? (
-                        <span className="text-xs text-slate-500">Unavailable</span>
-                      ) : (
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <div className="flex-1 min-w-0">
-                            {(() => {
-                              const total = hours.close - hours.open;
-                              if (total <= 0) return null;
-                              const s = rec.startMinutes!;
-                              const e = rec.endMinutes!;
-                              const bPct = clamp((s - hours.open) / total * 100, 0, 100);
-                              const wPct = clamp((e - s) / total * 100, 0, 100);
-                              const aPct = clamp(100 - bPct - wPct, 0, 100);
-                              return (
-                                <div
-                                  className="flex h-1 rounded-full overflow-hidden gap-px"
-                                  aria-label={`${DAY_SHORT[rec.dayOfWeek]} availability bar`}
-                                >
-                                  {bPct > 0 && <div className="bg-slate-700/60" style={{ width: `${bPct}%` }} />}
-                                  {wPct > 0 && <div className="bg-emerald-500/70" style={{ width: `${wPct}%` }} />}
-                                  {aPct > 0 && <div className="bg-slate-700/60" style={{ width: `${aPct}%` }} />}
-                                </div>
-                              );
-                            })()}
-                          </div>
-                          <span className="text-[11px] text-slate-400 shrink-0 tabular-nums">
-                            {fmtMinutes(rec.startMinutes!)} – {fmtMinutes(rec.endMinutes!)}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    {rec.note && (
-                      <div className="text-[11px] text-slate-500 italic pl-9">{rec.note}</div>
-                    )}
-                  </div>
-                );
-              })}
-              {freeDows.length > 0 && (
-                <div className="text-[11px] text-slate-500">
-                  {freeDows.map((d) => DAY_SHORT[d]).join(", ")} — no restrictions
-                </div>
-              )}
+        <div className="mt-3 flex flex-col gap-4">
+          <div>
+            <div className="text-[11px] text-slate-400 font-semibold tracking-wider uppercase mb-2 px-1">
+              Ideal Weekly Hours
             </div>
-          )}
+            <div className="bg-card rounded-2xl border border-slate-800/60 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={168}
+                  step={1}
+                  placeholder="Not set"
+                  aria-label={`Ideal weekly hours for ${employee.name}`}
+                  value={idealVal}
+                  onChange={(e) => scheduleIdealSave(e.target.value)}
+                  className="w-24 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500/70 transition-colors"
+                />
+                <span className="text-xs text-slate-500">hours per week</span>
+                <div aria-live="polite" className="ml-auto text-xs">
+                  {idealStatus === "saving" && <span className="text-slate-400">Saving…</span>}
+                  {idealStatus === "saved"  && <span className="text-emerald-400">Saved ✓</span>}
+                  {idealStatus === "error"  && <span role="alert" className="text-red-400">{idealError ?? "Failed to save"}</span>}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <AvailabilitySection
+            employeeId={employee.id}
+            weeklyHours={storeHours}
+            firstDayOfWeek={firstDayOfWeek}
+          />
         </div>
       )}
     </div>
@@ -808,6 +805,16 @@ export default function SettingsPageClient({
             firstDayOfWeek={firstDayOfWeek}
           />
         )}
+        {employeeId !== null && (() => {
+          const mine = employees.find((e) => e.id === employeeId);
+          return mine?.ideal_hours != null ? (
+            <div data-testid="my-ideal-hours" className="text-xs text-slate-500 px-1 -mt-3">
+              Ideal weekly hours:{" "}
+              <span className="text-slate-300 font-semibold">{mine.ideal_hours}</span>
+              {" "}— managers use this when building the schedule.
+            </div>
+          ) : null;
+        })()}
 
         {/* Appearance — all users */}
         <section>
@@ -1500,7 +1507,14 @@ export default function SettingsPageClient({
                     )}
                   </div>
                   {isManager && (
-                    <EmployeeAvailabilityRow employeeId={emp.id} storeHours={weeklyHours} />
+                    <EmployeePreferencesRow
+                      employee={emp}
+                      storeHours={weeklyHours}
+                      firstDayOfWeek={firstDayOfWeek}
+                      onIdealHoursSaved={(id, idealHours) =>
+                        setEmployees((prev) => prev.map((e) => e.id === id ? { ...e, ideal_hours: idealHours } : e))
+                      }
+                    />
                   )}
                 </motion.div>
               ))

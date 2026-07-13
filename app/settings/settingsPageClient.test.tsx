@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent, within } from "@testing-library/react";
 import SettingsPageClient from "./settingsPageClient";
 
 vi.mock("next/navigation", () => ({
@@ -345,17 +345,20 @@ describe("SettingsPageClient — auto-save", () => {
 
 });
 
-// ── EmployeeAvailabilityRow (manager Settings) ─────────────────────────────
+// ── EmployeePreferencesRow (manager Settings) ─────────────────────────────
 
-describe("EmployeeAvailabilityRow in SettingsPageClient", () => {
-  function setupManagerFetch(availabilityRecords: any[] = []) {
+describe("EmployeePreferencesRow in SettingsPageClient", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  function setupManagerFetch(availabilityRecords: any[] = [], employee: Record<string, unknown> = {}) {
     return vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
       const url = input.toString();
       const method = (init?.method ?? "GET").toUpperCase();
       if (method === "GET") {
         if (url.includes("/api/store-hours")) return { ok: true, json: async () => DEFAULT_HOURS } as Response;
         if (url.includes("/api/settings"))   return { ok: true, json: async () => DEFAULT_SETTINGS } as Response;
-        if (url.includes("/api/employees"))  return { ok: true, json: async () => [{ id: 5, name: "Alice Smith", email: "alice@test.com", user_id: null }] } as Response;
+        if (url.includes("/api/employees"))  return { ok: true, json: async () => [{ id: 5, name: "Alice Smith", email: "alice@test.com", user_id: null, ideal_hours: null, ...employee }] } as Response;
         if (url.includes("/api/me"))         return { ok: true, json: async () => ({ isManager: true }) } as Response;
         if (url.includes("/api/templates"))  return { ok: true, json: async () => ({ templates: [] }) } as Response;
         if (url.includes("/api/availability")) return { ok: true, json: async () => availabilityRecords } as Response;
@@ -364,63 +367,116 @@ describe("EmployeeAvailabilityRow in SettingsPageClient", () => {
     });
   }
 
-  it("renders 'Typical Week' toggle for each employee when manager", async () => {
+  async function renderAndExpand() {
+    render(<SettingsPageClient />);
+    await screen.findByTestId("store-hours-section");
+    await waitFor(() => expect(screen.getByTestId("employee-avail-5")).toBeInTheDocument());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Toggle schedule preferences for Alice Smith" }));
+      await Promise.resolve();
+    });
+    return within(screen.getByTestId("employee-avail-5"));
+  }
+
+  it("renders 'Schedule Preferences' toggle for each employee when manager", async () => {
     setupManagerFetch();
     render(<SettingsPageClient />);
     await screen.findByTestId("store-hours-section");
     await waitFor(() => expect(screen.getByTestId("employee-avail-5")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Toggle typical week" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Toggle schedule preferences for Alice Smith" })).toBeInTheDocument();
   });
 
-  it("expands to show 'No restrictions set' when employee has no records", async () => {
+  it("shows the saved ideal hours in the collapsed summary", async () => {
+    setupManagerFetch([], { ideal_hours: 20 });
+    render(<SettingsPageClient />);
+    await screen.findByTestId("store-hours-section");
+    await waitFor(() => expect(screen.getByText(/20 hrs\/week/)).toBeInTheDocument());
+  });
+
+  it("expands to an editable availability section with all 7 day rows", async () => {
     setupManagerFetch([]);
-    render(<SettingsPageClient />);
-    await screen.findByTestId("store-hours-section");
-    await waitFor(() => expect(screen.getByTestId("employee-avail-5")).toBeInTheDocument());
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Toggle typical week" }));
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(screen.getByText("No restrictions set")).toBeInTheDocument());
+    const row = await renderAndExpand();
+    await waitFor(() => expect(row.getByTestId("availability-section")).toBeInTheDocument());
+    expect(row.getAllByText("Any time").length).toBe(7);
   });
 
-  it("shows 'Unavailable' for Off days (null start/end)", async () => {
-    setupManagerFetch([{ id: 1, dayOfWeek: 0, startMinutes: null, endMinutes: null, note: null }]);
-    render(<SettingsPageClient />);
-    await screen.findByTestId("store-hours-section");
-    await waitFor(() => expect(screen.getByTestId("employee-avail-5")).toBeInTheDocument());
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Toggle typical week" }));
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(screen.getByText("Unavailable")).toBeInTheDocument());
-  });
-
-  it("shows time range and availability bar for Window records", async () => {
-    setupManagerFetch([{ id: 2, dayOfWeek: 1, startMinutes: 720, endMinutes: 1320, note: null }]);
-    render(<SettingsPageClient />);
-    await screen.findByTestId("store-hours-section");
-    await waitFor(() => expect(screen.getByTestId("employee-avail-5")).toBeInTheDocument());
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Toggle typical week" }));
-      await Promise.resolve();
-    });
+  it("shows 'Off' for unavailable days and time range for window records", async () => {
+    setupManagerFetch([
+      { id: 1, dayOfWeek: 0, startMinutes: null, endMinutes: null, note: null },
+      { id: 2, dayOfWeek: 1, startMinutes: 720, endMinutes: 1320, note: null },
+    ]);
+    const row = await renderAndExpand();
     await waitFor(() => {
-      expect(screen.getByText(/12:00 PM/)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Mon availability bar/)).toBeInTheDocument();
+      expect(row.getByText("Off")).toBeInTheDocument();
+      expect(row.getByText(/12:00 PM – 10:00 PM/)).toBeInTheDocument();
     });
   });
 
-  it("shows note under restricted day when note exists", async () => {
-    setupManagerFetch([{ id: 1, dayOfWeek: 0, startMinutes: null, endMinutes: null, note: "Family time" }]);
-    render(<SettingsPageClient />);
-    await screen.findByTestId("store-hours-section");
-    await waitFor(() => expect(screen.getByTestId("employee-avail-5")).toBeInTheDocument());
+  it("saving the employee's availability POSTs /api/availability with their employeeId", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetchSpy = setupManagerFetch([]);
+    const row = await renderAndExpand();
+    await waitFor(() => expect(row.getByTestId("availability-section")).toBeInTheDocument());
+
+    await act(async () => { fireEvent.click(row.getByTestId("day-row-0")); });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Toggle typical week" }));
+      fireEvent.click(screen.getByRole("button", { name: "Off" }));
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
       await Promise.resolve();
     });
-    await waitFor(() => expect(screen.getByText("Family time")).toBeInTheDocument());
+
+    const postCall = fetchSpy.mock.calls.find(
+      ([url, opts]) => url === "/api/availability" && opts?.method === "POST"
+    );
+    expect(postCall).toBeTruthy();
+    const body = JSON.parse(postCall![1]!.body as string);
+    expect(body).toMatchObject({ employeeId: 5, dayOfWeek: 0, startMinutes: null, endMinutes: null });
+    vi.useRealTimers();
+  });
+
+  it("editing ideal hours PATCHes /api/employees after the debounce", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetchSpy = setupManagerFetch([]);
+    const row = await renderAndExpand();
+
+    const input = row.getByLabelText("Ideal weekly hours for Alice Smith");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "25" } });
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const patchCall = fetchSpy.mock.calls.find(
+      ([url, opts]) => url === "/api/employees" && opts?.method === "PATCH"
+    );
+    expect(patchCall).toBeTruthy();
+    expect(JSON.parse(patchCall![1]!.body as string)).toEqual({ id: 5, idealHours: 25 });
+    await waitFor(() => expect(row.getByText("Saved ✓")).toBeInTheDocument());
+    vi.useRealTimers();
+  });
+
+  it("rejects out-of-range ideal hours without calling the API", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetchSpy = setupManagerFetch([]);
+    const row = await renderAndExpand();
+
+    const input = row.getByLabelText("Ideal weekly hours for Alice Smith");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "200" } });
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+
+    const patchCall = fetchSpy.mock.calls.find(
+      ([url, opts]) => url === "/api/employees" && opts?.method === "PATCH"
+    );
+    expect(patchCall).toBeFalsy();
+    await waitFor(() =>
+      expect(row.getByText(/between 0 and 168/)).toBeInTheDocument()
+    );
+    vi.useRealTimers();
   });
 });
 

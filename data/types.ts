@@ -5,6 +5,7 @@ export type Employee = {
   name: string;
   email?: string;
   user_id?: string | null;
+  ideal_hours?: number | null; // preferred hours/week; null = no preference set
 };
 
 export function formatDisplayName(name: string): string {

@@ -199,6 +199,46 @@ describe("PATCH /api/employees", () => {
     expect(res.status).toBe(400);
   });
 
+  // ── Ideal hours ─────────────────────────────────────────────────────────────
+
+  it("returns 200 when setting ideal hours", async () => {
+    mockCreateClient.mockResolvedValue(makeSupabaseClient({ user: MOCK_USER, isManager: true }) as any);
+    const res = await PATCH(patchReq({ id: 1, idealHours: 25 }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it("returns 200 when clearing ideal hours with null", async () => {
+    mockCreateClient.mockResolvedValue(makeSupabaseClient({ user: MOCK_USER, isManager: true }) as any);
+    const res = await PATCH(patchReq({ id: 1, idealHours: null }));
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 400 for negative ideal hours", async () => {
+    mockCreateClient.mockResolvedValue(makeSupabaseClient({ user: MOCK_USER, isManager: true }) as any);
+    const res = await PATCH(patchReq({ id: 1, idealHours: -5 }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("idealHours") });
+  });
+
+  it("returns 400 for ideal hours above 168", async () => {
+    mockCreateClient.mockResolvedValue(makeSupabaseClient({ user: MOCK_USER, isManager: true }) as any);
+    const res = await PATCH(patchReq({ id: 1, idealHours: 169 }));
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for non-integer ideal hours", async () => {
+    mockCreateClient.mockResolvedValue(makeSupabaseClient({ user: MOCK_USER, isManager: true }) as any);
+    const res = await PATCH(patchReq({ id: 1, idealHours: 20.5 }));
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 403 when a non-manager sets ideal hours", async () => {
+    mockCreateClient.mockResolvedValue(makeSupabaseClient({ user: MOCK_USER, isManager: false }) as any);
+    const res = await PATCH(patchReq({ id: 1, idealHours: 25 }));
+    expect(res.status).toBe(403);
+  });
+
   // ── DB error ────────────────────────────────────────────────────────────────
 
   it("returns 500 on database error", async () => {

@@ -104,6 +104,14 @@ describe("POST /api/availability", () => {
     expect(res.status).toBe(200);
   });
 
+  it("returns the upserted record id", async () => {
+    const client = makeSupabaseClient({ user: MOCK_USER, isManager: true, queryData: { id: 7 } });
+    mockCreateClient.mockResolvedValue(client as any);
+    const res = await POST(postReq({ employeeId: 1, dayOfWeek: 1, startMinutes: 720, endMinutes: 1320 }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, id: 7 });
+  });
+
   it("accepts optional note → 200", async () => {
     const client = makeSupabaseClient({ user: MOCK_USER, isManager: true });
     mockCreateClient.mockResolvedValue(client as any);

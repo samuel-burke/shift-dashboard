@@ -111,12 +111,14 @@ export async function POST(request: Request) {
     employeeName = emp?.name ?? null;
   }
 
-  const { error: upsertError } = await supabase
+  const { data: upserted, error: upsertError } = await supabase
     .from("availability")
     .upsert(
       withOrg(orgId, { employee_id: employeeId, day_of_week: dayOfWeek, start_minutes: startMinutes, end_minutes: endMinutes, note }),
       { onConflict: "employee_id,day_of_week" }
-    );
+    )
+    .select("id")
+    .maybeSingle();
 
   if (upsertError) {
     console.error("[api/availability]", upsertError);
@@ -138,7 +140,7 @@ export async function POST(request: Request) {
     },
   }).catch(() => {});
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, id: upserted?.id ?? null });
 }
 
 export async function DELETE(request: Request) {
