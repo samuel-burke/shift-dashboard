@@ -9,6 +9,28 @@ function makeMockFetch(records: any[] = []) {
   });
 }
 
+// Route-aware mock: GET /api/availability returns records, GET .../requests
+// returns pending requests, writes return the given responses.
+function makeRouteFetch({
+  records = [] as any[],
+  requests = [] as any[],
+  postOk = true,
+  postResponse = { ok: true } as Record<string, unknown>,
+  deleteOk = true,
+  deleteResponse = { ok: true } as Record<string, unknown>,
+} = {}) {
+  return vi.fn().mockImplementation(async (input: any, init?: any) => {
+    const url = input.toString();
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (method === "GET" && url.includes("/api/availability/requests"))
+      return { ok: true, json: async () => ({ requests }) };
+    if (method === "GET") return { ok: true, json: async () => records };
+    if (method === "POST") return { ok: postOk, json: async () => postResponse };
+    if (method === "DELETE") return { ok: deleteOk, json: async () => deleteResponse };
+    return { ok: true, json: async () => ({}) };
+  });
+}
+
 const WEEKLY_HOURS: Record<number, { open: number; close: number }> = {
   0: { open: 480,  close: 1200 },
   1: { open: 360,  close: 1320 },
@@ -160,9 +182,7 @@ describe("AvailabilitySection", () => {
 
   it("clicking 'Off' in sheet fires POST with null times", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const mockFetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) })          // GET
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) }); // POST
+    const mockFetch = makeRouteFetch();
     vi.stubGlobal("fetch", mockFetch);
     render(<AvailabilitySection {...BASE_PROPS} />);
     await act(async () => { await Promise.resolve(); });
@@ -178,9 +198,7 @@ describe("AvailabilitySection", () => {
   it("clicking 'Any time' on an 'Off' day fires DELETE", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const records = [{ id: 5, dayOfWeek: 0, startMinutes: null, endMinutes: null, note: null }];
-    const mockFetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(records) })       // GET
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) }); // DELETE
+    const mockFetch = makeRouteFetch({ records });
     vi.stubGlobal("fetch", mockFetch);
     render(<AvailabilitySection {...BASE_PROPS} />);
     await act(async () => { await Promise.resolve(); });
@@ -195,9 +213,7 @@ describe("AvailabilitySection", () => {
 
   it("shows 'Saved ✓' in sheet after successful save", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const mockFetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) });
+    const mockFetch = makeRouteFetch();
     vi.stubGlobal("fetch", mockFetch);
     render(<AvailabilitySection {...BASE_PROPS} />);
     await act(async () => { await Promise.resolve(); });
@@ -212,9 +228,7 @@ describe("AvailabilitySection", () => {
 
   it("shows 'Failed to save' in sheet on API error", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const mockFetch = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) })
-      .mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: "DB error" }) });
+    const mockFetch = makeRouteFetch({ postOk: false, postResponse: { error: "DB error" } });
     vi.stubGlobal("fetch", mockFetch);
     render(<AvailabilitySection {...BASE_PROPS} />);
     await act(async () => { await Promise.resolve(); });
@@ -264,6 +278,60 @@ describe("AvailabilitySection", () => {
     expect(screen.queryByText("✓ Weekdays updated")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Weekdays" })).toBeInTheDocument();
     vi.useRealTimers();
+  });
+
+  // ── Manager-approval flow (employee saves become change requests) ───────────
+
+  it("shows 'Sent for manager approval' and a Pending badge when the save returns pending", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const mockFetch = makeRouteFetch({ postResponse: { ok: true, pending: true, requestId: 9 } });
+    vi.stubGlobal("fetch", mockFetch);
+    render(<AvailabilitySection {...BASE_PROPS} />);
+    await act(async () => { await Promise.resolve(); });
+
+    await openSheet(0);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Off" })); });
+    await act(async () => { vi.advanceTimersByTime(1000); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(screen.getByText("Sent for manager approval ✓")).toBeInTheDocument();
+    expect(screen.getByText("Pending approval")).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it("overlays a pending change request from the server as the day's state", async () => {
+    const requests = [{ id: 7, dayOfWeek: 2, startMinutes: 600, endMinutes: 900, note: null, clear: false }];
+    vi.stubGlobal("fetch", makeRouteFetch({ requests }));
+    render(<AvailabilitySection {...BASE_PROPS} />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // Tue shows the requested window plus the pending badge
+    expect(screen.getByText(/10:00 AM – 3:00 PM/)).toBeInTheDocument();
+    expect(screen.getByText("Pending approval")).toBeInTheDocument();
+  });
+
+  it("cancel request withdraws the pending change and restores the applied state", async () => {
+    const records  = [{ id: 5, dayOfWeek: 2, startMinutes: 720, endMinutes: 1320, note: null }];
+    const requests = [{ id: 7, dayOfWeek: 2, startMinutes: null, endMinutes: null, note: null, clear: false }];
+    const mockFetch = makeRouteFetch({ records, requests });
+    vi.stubGlobal("fetch", mockFetch);
+    render(<AvailabilitySection {...BASE_PROPS} />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // Pending "off" request overlays the saved window
+    expect(screen.getByText("Off")).toBeInTheDocument();
+
+    await openSheet(2);
+    expect(screen.getByTestId("pending-request-banner")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel request" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith("/api/availability/requests/7", expect.objectContaining({ method: "DELETE" }));
+    // The applied window is restored and the pending badge is gone
+    expect(screen.queryByTestId("pending-request-banner")).not.toBeInTheDocument();
+    expect(screen.getByText(/12:00 PM – 10:00 PM/)).toBeInTheDocument();
   });
 
   it("shows visual availability bar in sheet for a saved window record", async () => {

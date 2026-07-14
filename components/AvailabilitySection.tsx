@@ -18,7 +18,20 @@ type DayConfig = {
   startVal: string;
   endVal: string;
   note: string;
-  saveStatus: "idle" | "saving" | "saved" | "error";
+  // "pending" = the save became a change request awaiting manager approval.
+  saveStatus: "idle" | "saving" | "saved" | "pending" | "error";
+  // Set while a change request for this day awaits a manager's decision; the
+  // displayed state/times are the *requested* ones until it is decided.
+  pendingRequestId: number | null;
+};
+
+type PendingRequest = {
+  id: number;
+  dayOfWeek: number;
+  startMinutes: number | null;
+  endMinutes: number | null;
+  note: string | null;
+  clear: boolean;
 };
 
 const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -67,7 +80,7 @@ export default function AvailabilitySection({
   const orderedDays = Array.from({ length: 7 }, (_, i) => (i + firstDayOfWeek) % 7);
 
   const defaultDay = (): DayConfig => ({
-    recordId: null, state: "any", startVal: "", endVal: "", note: "", saveStatus: "idle",
+    recordId: null, state: "any", startVal: "", endVal: "", note: "", saveStatus: "idle", pendingRequestId: null,
   });
 
   const [days, setDays] = useState<Record<number, DayConfig>>(() => {
@@ -103,9 +116,13 @@ export default function AvailabilitySection({
   const timerRefs = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
   useEffect(() => {
-    fetch(`/api/availability?employeeId=${employeeId}`)
-      .then((r) => r.json())
-      .then((records: AvailabilityRecord[]) => {
+    Promise.all([
+      fetch(`/api/availability?employeeId=${employeeId}`).then((r) => r.json()),
+      fetch(`/api/availability/requests?employeeId=${employeeId}`)
+        .then((r) => (r.ok ? r.json() : { requests: [] }))
+        .catch(() => ({ requests: [] })),
+    ])
+      .then(([records, { requests }]: [AvailabilityRecord[], { requests: PendingRequest[] }]) => {
         setDays((prev) => {
           const next = { ...prev };
           for (const rec of records) {
@@ -121,6 +138,26 @@ export default function AvailabilitySection({
                 endVal:   minutesToTimeStr(rec.endMinutes),
                 note: rec.note ?? "",
                 saveStatus: "saved",
+              };
+            }
+          }
+          // Overlay pending change requests: show the requested state, tagged
+          // as awaiting approval, until a manager decides.
+          for (const req of Array.isArray(requests) ? requests : []) {
+            const dow = req.dayOfWeek;
+            if (req.clear) {
+              next[dow] = { ...next[dow], state: "any", startVal: "", endVal: "", note: "", saveStatus: "idle", pendingRequestId: req.id };
+            } else if (req.startMinutes === null || req.endMinutes === null) {
+              next[dow] = { ...next[dow], state: "off", startVal: "", endVal: "", note: req.note ?? "", saveStatus: "idle", pendingRequestId: req.id };
+            } else {
+              next[dow] = {
+                ...next[dow],
+                state: "window",
+                startVal: minutesToTimeStr(req.startMinutes),
+                endVal:   minutesToTimeStr(req.endMinutes),
+                note: req.note ?? "",
+                saveStatus: "idle",
+                pendingRequestId: req.id,
               };
             }
           }
@@ -145,12 +182,29 @@ export default function AvailabilitySection({
     if (cfg.state === "any") {
       if (cfg.recordId) {
         try {
-          await fetch("/api/availability", {
+          const res = await fetch("/api/availability", {
             method: "DELETE",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id: cfg.recordId }),
           });
-          setDays((prev) => ({ ...prev, [dow]: { ...prev[dow], recordId: null, saveStatus: "saved" } }));
+          if (!res.ok) throw new Error();
+          const json = await res.json();
+          if (json.pending) {
+            // Employee: the removal became a change request awaiting approval.
+            setDays((prev) => ({ ...prev, [dow]: { ...prev[dow], pendingRequestId: json.requestId ?? prev[dow].pendingRequestId, saveStatus: "pending" } }));
+          } else {
+            setDays((prev) => ({ ...prev, [dow]: { ...prev[dow], recordId: null, pendingRequestId: null, saveStatus: "saved" } }));
+          }
+        } catch {
+          setDays((prev) => ({ ...prev, [dow]: { ...prev[dow], saveStatus: "error" } }));
+        }
+      } else if (cfg.pendingRequestId) {
+        // No underlying record — "any" is already the applied state, so just
+        // withdraw the pending change request.
+        try {
+          const res = await fetch(`/api/availability/requests/${cfg.pendingRequestId}`, { method: "DELETE" });
+          if (!res.ok) throw new Error();
+          setDays((prev) => ({ ...prev, [dow]: { ...prev[dow], pendingRequestId: null, saveStatus: "saved" } }));
         } catch {
           setDays((prev) => ({ ...prev, [dow]: { ...prev[dow], saveStatus: "error" } }));
         }
@@ -172,13 +226,53 @@ export default function AvailabilitySection({
       });
       if (res.ok) {
         const json = await res.json();
-        setDays((prev) => ({
-          ...prev,
-          [dow]: { ...prev[dow], recordId: json.id ?? prev[dow].recordId, saveStatus: "saved" },
-        }));
+        if (json.pending) {
+          // Employee: saved as a change request awaiting manager approval.
+          setDays((prev) => ({
+            ...prev,
+            [dow]: { ...prev[dow], pendingRequestId: json.requestId ?? prev[dow].pendingRequestId, saveStatus: "pending" },
+          }));
+        } else {
+          setDays((prev) => ({
+            ...prev,
+            [dow]: { ...prev[dow], recordId: json.id ?? prev[dow].recordId, pendingRequestId: null, saveStatus: "saved" },
+          }));
+        }
       } else {
         setDays((prev) => ({ ...prev, [dow]: { ...prev[dow], saveStatus: "error" } }));
       }
+    } catch {
+      setDays((prev) => ({ ...prev, [dow]: { ...prev[dow], saveStatus: "error" } }));
+    }
+  }
+
+  // Withdraw a pending change request and restore the day to its applied
+  // (server-side) availability.
+  async function cancelPendingRequest(dow: number, requestId: number) {
+    try {
+      const res = await fetch(`/api/availability/requests/${requestId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      const records: AvailabilityRecord[] = await fetch(`/api/availability?employeeId=${employeeId}`)
+        .then((r) => r.json())
+        .catch(() => []);
+      setDays((prev) => {
+        const rec = Array.isArray(records) ? records.find((r) => r.dayOfWeek === dow) : undefined;
+        const restored: DayConfig = !rec
+          ? { ...prev[dow], recordId: null, state: "any", startVal: "", endVal: "", note: "", saveStatus: "idle", pendingRequestId: null }
+          : rec.startMinutes === null || rec.endMinutes === null
+          ? { ...prev[dow], recordId: rec.id, state: "off", startVal: "", endVal: "", note: rec.note ?? "", saveStatus: "idle", pendingRequestId: null }
+          : {
+              ...prev[dow],
+              recordId: rec.id,
+              state: "window",
+              startVal: minutesToTimeStr(rec.startMinutes),
+              endVal:   minutesToTimeStr(rec.endMinutes),
+              note: rec.note ?? "",
+              saveStatus: "idle",
+              pendingRequestId: null,
+            };
+        return { ...prev, [dow]: restored };
+      });
     } catch {
       setDays((prev) => ({ ...prev, [dow]: { ...prev[dow], saveStatus: "error" } }));
     }
@@ -283,6 +377,11 @@ export default function AvailabilitySection({
                 {cfg.saveStatus === "error" && (
                   <span className="text-[11px] text-red-400">Error</span>
                 )}
+                {cfg.saveStatus !== "saving" && cfg.saveStatus !== "error" && cfg.pendingRequestId !== null && (
+                  <span className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-full px-2 py-px">
+                    Pending approval
+                  </span>
+                )}
               </span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-slate-500 shrink-0"><path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
@@ -327,6 +426,24 @@ export default function AvailabilitySection({
                   <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/></svg>
                 </button>
               </div>
+
+              {/* Pending change request banner */}
+              {sheetDay?.pendingRequestId != null && (
+                <div
+                  data-testid="pending-request-banner"
+                  className="mb-4 px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3"
+                >
+                  <span className="text-xs text-amber-400">
+                    This change is awaiting manager approval.
+                  </span>
+                  <button
+                    onClick={() => cancelPendingRequest(activeDow, sheetDay.pendingRequestId!)}
+                    className="shrink-0 text-xs font-semibold text-amber-300 bg-transparent border border-amber-500/40 rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-amber-500/10 transition-colors"
+                  >
+                    Cancel request
+                  </button>
+                </div>
+              )}
 
               {/* Segmented control */}
               <LayoutGroup id={`avail-pill-${activeDow}`}>
@@ -451,6 +568,9 @@ export default function AvailabilitySection({
                 )}
                 {sheetDay?.saveStatus === "saved" && (
                   <span className="text-sm text-emerald-400">Saved ✓</span>
+                )}
+                {sheetDay?.saveStatus === "pending" && (
+                  <span className="text-sm text-amber-400">Sent for manager approval ✓</span>
                 )}
                 {sheetDay?.saveStatus === "error" && (
                   <span className="text-sm text-red-400">Failed to save</span>

@@ -3,8 +3,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useIsDesktop } from "../hooks/useIsDesktop";
-import { getMonogram } from "../data/types";
+import { getMonogram, fmtMinutes } from "../data/types";
 import { TimeOffPendingIcon } from "./ShiftIcons";
+
+const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 const listContainer = { hidden: {}, show: { transition: { staggerChildren: 0.055, delayChildren: 0.12 } } };
 const listItem = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 320, damping: 26 } } };
@@ -25,16 +27,36 @@ type TimeOffItem = {
   note?: string;
 };
 
+export type AvailabilityRequestItem = {
+  id: number;
+  employeeName: string;
+  dayOfWeek: number;
+  startMinutes: number | null;
+  endMinutes: number | null;
+  note: string | null;
+  clear: boolean;
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
   swaps: SwapItem[];
   timeOff: TimeOffItem[];
+  availability?: AvailabilityRequestItem[];
   onApproveSwap: (id: number) => Promise<void>;
   onDenySwap: (id: number) => Promise<void>;
   onApproveTimeOff: (id: number) => Promise<void>;
   onDenyTimeOff: (id: number) => Promise<void>;
+  onApproveAvailability?: (id: number) => Promise<void>;
+  onDenyAvailability?: (id: number) => Promise<void>;
 };
+
+// Human summary of the requested day state.
+function requestedLabel(req: AvailabilityRequestItem): string {
+  if (req.clear) return "Any time (remove restriction)";
+  if (req.startMinutes === null || req.endMinutes === null) return "Unavailable all day";
+  return `${fmtMinutes(req.startMinutes)} – ${fmtMinutes(req.endMinutes)}`;
+}
 
 function formatLongDate(dateStr: string): string {
   // dateStr is "YYYY-MM-DD"; parse as local date to avoid UTC offset shift
@@ -70,10 +92,13 @@ export default function RequestsDrawer({
   onClose,
   swaps,
   timeOff,
+  availability = [],
   onApproveSwap,
   onDenySwap,
   onApproveTimeOff,
   onDenyTimeOff,
+  onApproveAvailability,
+  onDenyAvailability,
 }: Props) {
   const isDesktop = useIsDesktop();
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +123,7 @@ export default function RequestsDrawer({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  const total = swaps.length + timeOff.length;
+  const total = swaps.length + timeOff.length + availability.length;
 
   return (
     <AnimatePresence>
@@ -179,6 +204,25 @@ export default function RequestsDrawer({
                         {timeOff.map((req) => (
                           <motion.div key={req.id} variants={listItem}>
                             <TimeOffCard request={req} onApprove={onApproveTimeOff} onDeny={onDenyTimeOff} onError={setError} />
+                          </motion.div>
+                        ))}
+                      </motion.div>
+                    </section>
+                  )}
+
+                  {/* Availability change section */}
+                  {availability.length > 0 && onApproveAvailability && onDenyAvailability && (
+                    <section aria-label="Availability change requests">
+                      <SectionHeading label="Availability Changes" count={availability.length} />
+                      <motion.div className="flex flex-col gap-2" variants={listContainer} initial="hidden" animate="show">
+                        {availability.map((req) => (
+                          <motion.div key={req.id} variants={listItem}>
+                            <AvailabilityCard
+                              request={req}
+                              onApprove={onApproveAvailability}
+                              onDeny={onDenyAvailability}
+                              onError={setError}
+                            />
                           </motion.div>
                         ))}
                       </motion.div>
@@ -268,6 +312,75 @@ function TimeOffCard({
           disabled={loading !== null}
           aria-busy={loading === "deny"}
           aria-label={`Deny ${request.employeeName}'s time off request`}
+          className="flex-1 py-3.5 rounded-xl bg-transparent border border-slate-700 text-red-400 font-semibold text-xs cursor-pointer hover:bg-red-500/20 hover:border-red-500/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading === "deny" ? "…" : "Deny"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AvailabilityCard({
+  request,
+  onApprove,
+  onDeny,
+  onError,
+}: {
+  request: AvailabilityRequestItem;
+  onApprove: (id: number) => Promise<void>;
+  onDeny: (id: number) => Promise<void>;
+  onError: (msg: string | null) => void;
+}) {
+  const [loading, setLoading] = useState<"approve" | "deny" | null>(null);
+
+  async function run(action: "approve" | "deny", fn: (id: number) => Promise<void>) {
+    setLoading(action);
+    onError(null);
+    try {
+      await fn(request.id);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : `Failed to ${action} request`);
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  return (
+    <div className="bg-card rounded-2xl border border-slate-800/60 px-4 py-3">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="size-9 rounded-full bg-indigo-600/70 border border-indigo-500/30 flex items-center justify-center text-xs font-bold text-white shrink-0">
+          {getMonogram(request.employeeName)}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-sm text-slate-100 truncate">
+            {request.employeeName}
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5 text-xs text-slate-400">
+            <span className="text-slate-300">{DAY_FULL[request.dayOfWeek] ?? ""}s:</span>
+            {requestedLabel(request)}
+            {request.note && (
+              <span className="text-slate-500 truncate">· &ldquo;{request.note}&rdquo;</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          onClick={() => run("approve", onApprove)}
+          disabled={loading !== null}
+          aria-busy={loading === "approve"}
+          aria-label={`Approve ${request.employeeName}'s availability change`}
+          className="flex-1 py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-violet-500 text-white font-bold text-xs cursor-pointer border-none hover:brightness-110 transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading === "approve" ? "…" : "Approve"}
+        </button>
+        <button
+          onClick={() => run("deny", onDeny)}
+          disabled={loading !== null}
+          aria-busy={loading === "deny"}
+          aria-label={`Deny ${request.employeeName}'s availability change`}
           className="flex-1 py-3.5 rounded-xl bg-transparent border border-slate-700 text-red-400 font-semibold text-xs cursor-pointer hover:bg-red-500/20 hover:border-red-500/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading === "deny" ? "…" : "Deny"}

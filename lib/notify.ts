@@ -12,6 +12,9 @@ export type NotificationType =
   | "swap_denied"
   | "pto_approved"
   | "pto_denied"
+  | "availability_request"
+  | "availability_approved"
+  | "availability_denied"
   | "callout"
   | "late_clock_in"
   | "schedule_published"
@@ -36,6 +39,9 @@ const TYPE_TO_PREF: Record<NotificationType, PushPrefKey> = {
   chess_move:         "chess_alerts",
   pto_approved:       "pto_alerts",
   pto_denied:         "pto_alerts",
+  availability_request:  "pto_alerts",
+  availability_approved: "pto_alerts",
+  availability_denied:   "pto_alerts",
   callout:            "pto_alerts",
   schedule_published: "new_shift_alerts",
   open_shift_available: "new_shift_alerts",

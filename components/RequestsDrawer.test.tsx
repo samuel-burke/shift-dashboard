@@ -17,15 +17,30 @@ const TIME_OFF = [
   { id: 3, employeeName: "Sam Rivera", date: "2026-06-25", note: "Doctor" },
 ];
 
+const AVAILABILITY = [
+  {
+    id: 11,
+    employeeName: "Casey Fox",
+    dayOfWeek: 1,
+    startMinutes: 720,
+    endMinutes: 1320,
+    note: "Class in the morning",
+    clear: false,
+  },
+];
+
 const BASE = {
   open: true,
   onClose: () => {},
   swaps: SWAPS,
   timeOff: TIME_OFF,
+  availability: AVAILABILITY,
   onApproveSwap: () => Promise.resolve(),
   onDenySwap: () => Promise.resolve(),
   onApproveTimeOff: () => Promise.resolve(),
   onDenyTimeOff: () => Promise.resolve(),
+  onApproveAvailability: () => Promise.resolve(),
+  onDenyAvailability: () => Promise.resolve(),
 };
 
 describe("RequestsDrawer", () => {
@@ -34,25 +49,28 @@ describe("RequestsDrawer", () => {
     expect(screen.queryByTestId("requests-drawer")).not.toBeInTheDocument();
   });
 
-  it("renders both sections with their headings and items", () => {
+  it("renders all sections with their headings and items", () => {
     render(<RequestsDrawer {...BASE} />);
     expect(screen.getByText("Time Off")).toBeInTheDocument();
     expect(screen.getByText("Shift Swaps")).toBeInTheDocument();
+    expect(screen.getByText("Availability Changes")).toBeInTheDocument();
     expect(screen.getByText("Sam Rivera")).toBeInTheDocument();
+    expect(screen.getByText("Casey Fox")).toBeInTheDocument();
     expect(screen.getByText(/Alex Kim wants to swap with Jordan Lee/i)).toBeInTheDocument();
   });
 
   it("shows the total awaiting-approval count", () => {
     render(<RequestsDrawer {...BASE} />);
-    expect(screen.getByText("2 awaiting approval")).toBeInTheDocument();
+    expect(screen.getByText("3 awaiting approval")).toBeInTheDocument();
   });
 
-  it("shows an empty state and hides both sections when there are no requests", () => {
-    render(<RequestsDrawer {...BASE} swaps={[]} timeOff={[]} />);
+  it("shows an empty state and hides all sections when there are no requests", () => {
+    render(<RequestsDrawer {...BASE} swaps={[]} timeOff={[]} availability={[]} />);
     expect(screen.getByText("No pending requests")).toBeInTheDocument();
     expect(screen.getByText(/all caught up/i)).toBeInTheDocument();
     expect(screen.queryByText("Time Off")).not.toBeInTheDocument();
     expect(screen.queryByText("Shift Swaps")).not.toBeInTheDocument();
+    expect(screen.queryByText("Availability Changes")).not.toBeInTheDocument();
   });
 
   it("hides the time-off section when there are no time-off requests", () => {
@@ -89,6 +107,35 @@ describe("RequestsDrawer", () => {
     render(<RequestsDrawer {...BASE} onDenyTimeOff={onDenyTimeOff} />);
     fireEvent.click(screen.getByLabelText(/Deny Sam Rivera's time off request/i));
     await waitFor(() => expect(onDenyTimeOff).toHaveBeenCalledWith(3));
+  });
+
+  it("shows the requested day and window on the availability card", () => {
+    render(<RequestsDrawer {...BASE} />);
+    expect(screen.getByText(/Mondays:/)).toBeInTheDocument();
+    expect(screen.getByText(/12:00 PM – 10:00 PM/)).toBeInTheDocument();
+    expect(screen.getByText(/Class in the morning/)).toBeInTheDocument();
+  });
+
+  it("describes 'off' and 'clear' availability requests in plain words", () => {
+    const offReq   = { ...AVAILABILITY[0], id: 12, startMinutes: null, endMinutes: null, note: null };
+    const clearReq = { ...AVAILABILITY[0], id: 13, employeeName: "Dana Poe", clear: true, note: null };
+    render(<RequestsDrawer {...BASE} availability={[offReq, clearReq]} />);
+    expect(screen.getByText(/Unavailable all day/)).toBeInTheDocument();
+    expect(screen.getByText(/Any time \(remove restriction\)/)).toBeInTheDocument();
+  });
+
+  it("calls onApproveAvailability with the request id", async () => {
+    const onApproveAvailability = vi.fn().mockResolvedValue(undefined);
+    render(<RequestsDrawer {...BASE} onApproveAvailability={onApproveAvailability} />);
+    fireEvent.click(screen.getByLabelText(/Approve Casey Fox's availability change/i));
+    await waitFor(() => expect(onApproveAvailability).toHaveBeenCalledWith(11));
+  });
+
+  it("calls onDenyAvailability with the request id", async () => {
+    const onDenyAvailability = vi.fn().mockResolvedValue(undefined);
+    render(<RequestsDrawer {...BASE} onDenyAvailability={onDenyAvailability} />);
+    fireEvent.click(screen.getByLabelText(/Deny Casey Fox's availability change/i));
+    await waitFor(() => expect(onDenyAvailability).toHaveBeenCalledWith(11));
   });
 
   it("uses the same Approve-then-Deny button order for both request types", () => {

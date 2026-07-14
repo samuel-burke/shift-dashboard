@@ -3,10 +3,87 @@ import { createClient } from "@/lib/supabase-server";
 import { getOrgContext } from "@/lib/org-context";
 import { withOrg } from "@/lib/org-scope";
 import { writeAuditLog } from "@/lib/audit";
+import { notifyManagers } from "@/lib/notify";
 
 export const dynamic = "force-dynamic";
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// Employee edits don't apply immediately — they file a change request that a
+// manager approves (see /api/availability/requests). Replaces any pending
+// request for the same day so the newest ask is the one managers see.
+async function fileChangeRequest(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  args: {
+    orgId: string;
+    actorId: string;
+    employeeId: number;
+    employeeName: string | null;
+    dayOfWeek: number;
+    startMinutes: number | null;
+    endMinutes: number | null;
+    note: string | null;
+    clear: boolean;
+  }
+) {
+  const { orgId, actorId, employeeId, employeeName, dayOfWeek, startMinutes, endMinutes, note, clear } = args;
+
+  await supabase
+    .from("availability_change_requests")
+    .delete()
+    .eq("org_id", orgId)
+    .eq("employee_id", employeeId)
+    .eq("day_of_week", dayOfWeek)
+    .eq("status", "pending");
+
+  const { data: request, error: insertError } = await supabase
+    .from("availability_change_requests")
+    .insert(
+      withOrg(orgId, {
+        employee_id:             employeeId,
+        day_of_week:             dayOfWeek,
+        requested_start_minutes: startMinutes,
+        requested_end_minutes:   endMinutes,
+        requested_note:          note,
+        requested_clear:         clear,
+        created_by:              actorId,
+      })
+    )
+    .select("id")
+    .single();
+
+  if (insertError || !request) {
+    console.error("[api/availability]", insertError);
+    return { response: NextResponse.json({ error: "Internal server error" }, { status: 500 }) };
+  }
+
+  const dayName = DAY_NAMES[dayOfWeek] ?? "";
+  notifyManagers(
+    supabase,
+    orgId,
+    "availability_request",
+    "Availability Change Requested",
+    `${employeeName ?? "An employee"} requested a change to their ${dayName} availability.`,
+    { requestId: request.id, employeeId, dayOfWeek }
+  ).catch(() => {});
+
+  writeAuditLog({
+    action:       "availability.request",
+    orgId,
+    actorId,
+    resourceType: "availability_change_request",
+    resourceId:   String(request.id),
+    after: { employeeId, dayOfWeek, startMinutes, endMinutes, note, clear },
+    metadata: {
+      employeeId,
+      employeeName,
+      dayOfWeek,
+      dayName: DAY_NAMES[dayOfWeek] ?? null,
+    },
+  }).catch(() => {});
+
+  return { response: NextResponse.json({ ok: true, pending: true, requestId: request.id }) };
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -101,15 +178,30 @@ export async function POST(request: Request) {
     if (!linkedEmployee)
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     employeeName = linkedEmployee.name;
-  } else {
-    const { data: emp } = await supabase
-      .from("employees")
-      .select("name")
-      .eq("org_id", orgId)
-      .eq("id", employeeId)
-      .maybeSingle();
-    employeeName = emp?.name ?? null;
+
+    // Employee self-edits need manager approval: file a change request
+    // instead of writing to availability directly.
+    const { response } = await fileChangeRequest(supabase, {
+      orgId,
+      actorId: user.id,
+      employeeId,
+      employeeName,
+      dayOfWeek,
+      startMinutes,
+      endMinutes,
+      note,
+      clear: false,
+    });
+    return response;
   }
+
+  const { data: emp } = await supabase
+    .from("employees")
+    .select("name")
+    .eq("org_id", orgId)
+    .eq("id", employeeId)
+    .maybeSingle();
+  employeeName = emp?.name ?? null;
 
   const { data: upserted, error: upsertError } = await supabase
     .from("availability")
@@ -184,6 +276,21 @@ export async function DELETE(request: Request) {
     if (!linkedEmployee)
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     employeeName = linkedEmployee.name;
+
+    // Employee removing their own restriction ("any time") needs manager
+    // approval too: file a clear request instead of deleting directly.
+    const { response } = await fileChangeRequest(supabase, {
+      orgId,
+      actorId: user.id,
+      employeeId: record.employee_id,
+      employeeName,
+      dayOfWeek: record.day_of_week,
+      startMinutes: null,
+      endMinutes: null,
+      note: null,
+      clear: true,
+    });
+    return response;
   } else if (record?.employee_id) {
     const { data: emp } = await supabase
       .from("employees")

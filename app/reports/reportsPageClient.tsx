@@ -141,6 +141,10 @@ function auditTitle(entry: AuditEntry): string {
     case "payroll.export":       return `Exported payroll report`;
     case "availability.upsert":  return `Updated availability for ${empName}`;
     case "availability.delete":  return `Removed availability for ${empName}`;
+    case "availability.request": return `Availability change requested by ${empName}`;
+    case "availability_request.approve": return `Approved availability change for ${empName}`;
+    case "availability_request.deny":    return `Denied availability change for ${empName}`;
+    case "availability_request.cancel":  return `Cancelled availability change request`;
     case "ideal_hours.update":   return `Updated ideal hours for ${empName}`;
     case "settings.update":      return `Updated app settings`;
     case "store_hours.update":   return `Updated store hours`;
@@ -222,6 +226,10 @@ function auditDetail(entry: AuditEntry): string | null {
     }
     case "availability.upsert":
     case "availability.delete":
+    case "availability.request":
+    case "availability_request.approve":
+    case "availability_request.deny":
+    case "availability_request.cancel":
       return (m.dayName as string | null) ?? null;
     case "ideal_hours.update": {
       const bh = b.idealHours as number | null | undefined;

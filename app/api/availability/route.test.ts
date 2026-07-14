@@ -151,16 +151,47 @@ describe("POST /api/availability", () => {
     expect(res.status).toBe(403);
   });
 
-  it("returns 200 when employee sets OWN availability", async () => {
-    // User is linked to employee #1, request has employeeId: 1 → should succeed
+  it("files a pending change request when employee sets OWN availability", async () => {
+    // User is linked to employee #1, request has employeeId: 1 → succeeds, but
+    // as a change request awaiting manager approval rather than a direct write.
     const client = makeSupabaseClient({
       user: MOCK_USER,
       isManager: false,
       linkedEmployee: { id: 1, user_id: MOCK_USER.id },
+      tableOverrides: {
+        availability_change_requests: { data: { id: 44 }, error: null },
+      },
     });
     mockCreateClient.mockResolvedValue(client as any);
     const res = await POST(postReq({ employeeId: 1, dayOfWeek: 1, startMinutes: null, endMinutes: null }));
     expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, pending: true, requestId: 44 });
+    expect(client.from).toHaveBeenCalledWith("availability_change_requests");
+  });
+
+  it("does NOT write to availability directly for employee self-edits", async () => {
+    const client = makeSupabaseClient({
+      user: MOCK_USER,
+      isManager: false,
+      linkedEmployee: { id: 1, user_id: MOCK_USER.id },
+      tableOverrides: {
+        availability_change_requests: { data: { id: 44 }, error: null },
+      },
+    });
+    mockCreateClient.mockResolvedValue(client as any);
+    await POST(postReq({ employeeId: 1, dayOfWeek: 1, startMinutes: 720, endMinutes: 1320 }));
+    expect(client.from).not.toHaveBeenCalledWith("availability");
+  });
+
+  it("manager writes stay direct (no pending flag)", async () => {
+    const client = makeSupabaseClient({ user: MOCK_USER, isManager: true });
+    mockCreateClient.mockResolvedValue(client as any);
+    const res = await POST(postReq({ employeeId: 1, dayOfWeek: 1, startMinutes: 720, endMinutes: 1320 }));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.pending).toBeUndefined();
+    expect(client.from).toHaveBeenCalledWith("availability");
+    expect(client.from).not.toHaveBeenCalledWith("availability_change_requests");
   });
 
   it("returns 500 on db error", async () => {
@@ -228,18 +259,22 @@ describe("DELETE /api/availability", () => {
     expect(res.status).toBe(403);
   });
 
-  it("returns 200 when employee deletes own record", async () => {
-    // Record belongs to employee 1, user is linked to employee 1
+  it("files a pending clear request when employee deletes own record", async () => {
+    // Record belongs to employee 1, user is linked to employee 1 → the removal
+    // becomes a change request awaiting manager approval.
     const client = makeSupabaseClient({
       user: MOCK_USER,
       isManager: false,
       linkedEmployee: { id: 1, user_id: MOCK_USER.id },
       tableOverrides: {
-        availability: { data: { id: 5, employee_id: 1 }, error: null },
+        availability: { data: { id: 5, employee_id: 1, day_of_week: 2 }, error: null },
+        availability_change_requests: { data: { id: 45 }, error: null },
       },
     });
     mockCreateClient.mockResolvedValue(client as any);
     const res = await DELETE(deleteReq({ id: 5 }));
     expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, pending: true, requestId: 45 });
+    expect(client.from).toHaveBeenCalledWith("availability_change_requests");
   });
 });

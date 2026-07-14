@@ -33,7 +33,7 @@ import {
   TimeOffDeniedIcon,
   MegaphoneIcon,
 } from "../../components/ShiftIcons";
-import RequestsDrawer from "../../components/RequestsDrawer";
+import RequestsDrawer, { type AvailabilityRequestItem } from "../../components/RequestsDrawer";
 import SwapRequestSheet, { type CoworkerShift } from "../../components/SwapRequestSheet";
 import IncomingSwapRequests from "../../components/IncomingSwapRequests";
 
@@ -179,6 +179,7 @@ export default function SchedulePageClient() {
   const [calloutError, setCalloutError] = useState<string | null>(null);
   const [nextShift, setNextShift] = useState<Schedule | null | undefined>(undefined);
   const [pendingManagerTimeOff, setPendingManagerTimeOff] = useState<ManagerTimeOffRequest[]>([]);
+  const [pendingAvailabilityRequests, setPendingAvailabilityRequests] = useState<AvailabilityRequestItem[]>([]);
   // Every in-flight swap the caller can see (their own as employee; all of the
   // org's as a manager). Categorized below into manager-approval vs. incoming.
   const [allSwaps, setAllSwaps] = useState<Swap[]>([]);
@@ -230,6 +231,19 @@ export default function SchedulePageClient() {
       throw new Error(error ?? "Failed to deny request");
     }
     setPendingManagerTimeOff((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  async function decideAvailabilityRequest(id: number, status: "approved" | "denied") {
+    const res = await fetch(`/api/availability/requests/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+      const { error } = await res.json();
+      throw new Error(error ?? `Failed to ${status === "approved" ? "approve" : "deny"} request`);
+    }
+    setPendingAvailabilityRequests((prev) => prev.filter((r) => r.id !== id));
   }
 
   const loadSwaps = useCallback(() => {
@@ -363,12 +377,16 @@ export default function SchedulePageClient() {
     window.location.href = "/login";
   }
 
-  // Load pending time-off once manager status is known
+  // Load pending time-off and availability changes once manager status is known
   useEffect(() => {
     if (isManager) {
       fetch("/api/time-off")
         .then((r) => r.json())
         .then(({ requests }) => { if (Array.isArray(requests)) setPendingManagerTimeOff(requests); })
+        .catch(() => {});
+      fetch("/api/availability/requests")
+        .then((r) => r.json())
+        .then(({ requests }) => { if (Array.isArray(requests)) setPendingAvailabilityRequests(requests); })
         .catch(() => {});
     }
   }, [isManager]);
@@ -595,6 +613,14 @@ export default function SchedulePageClient() {
       loadSwaps();
     }
 
+    function refetchAvailabilityRequests() {
+      if (!isManagerRef.current) return;
+      fetch("/api/availability/requests")
+        .then((r) => r.json())
+        .then(({ requests }) => { if (Array.isArray(requests)) setPendingAvailabilityRequests(requests); })
+        .catch(() => {});
+    }
+
     let hiddenAt = 0;
     function onVisibility() {
       if (document.visibilityState === "hidden") {
@@ -603,6 +629,7 @@ export default function SchedulePageClient() {
         refetchSchedule();
         refetchTimeOff();
         refetchSwaps();
+        refetchAvailabilityRequests();
       }
     }
     document.addEventListener("visibilitychange", onVisibility);
@@ -620,6 +647,7 @@ export default function SchedulePageClient() {
       .on("postgres_changes", { event: "*", schema: "public", table: "time_off_requests" }, refetchTimeOff)
       .on("postgres_changes", { event: "*", schema: "public", table: "callouts" }, refetchCallouts)
       .on("postgres_changes", { event: "*", schema: "public", table: "shift_swaps" }, refetchSwaps)
+      .on("postgres_changes", { event: "*", schema: "public", table: "availability_change_requests" }, refetchAvailabilityRequests)
       .subscribe();
 
     return () => {
@@ -734,9 +762,10 @@ export default function SchedulePageClient() {
     [allSwaps],
   );
 
-  // Total pending items a manager must act on (swaps + time off), badged on the
-  // Requests button.
-  const pendingRequestsCount = managerSwaps.length + pendingManagerTimeOff.length;
+  // Total pending items a manager must act on (swaps + time off + availability
+  // changes), badged on the Requests button.
+  const pendingRequestsCount =
+    managerSwaps.length + pendingManagerTimeOff.length + pendingAvailabilityRequests.length;
 
   // Swaps the current user is personally part of, as requester or target.
   const mySwaps = useMemo(
@@ -1202,10 +1231,13 @@ export default function SchedulePageClient() {
             onClose={() => setSwapDrawerOpen(false)}
             swaps={managerSwaps}
             timeOff={pendingManagerTimeOff}
+            availability={pendingAvailabilityRequests}
             onApproveSwap={handleApproveSwap}
             onDenySwap={handleDenySwap}
             onApproveTimeOff={handleApproveManagerTimeOff}
             onDenyTimeOff={handleDenyManagerTimeOff}
+            onApproveAvailability={(id) => decideAvailabilityRequest(id, "approved")}
+            onDenyAvailability={(id) => decideAvailabilityRequest(id, "denied")}
           />
         )}
 
